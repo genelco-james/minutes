@@ -12,11 +12,11 @@
 |------|--------|-------|-------|
 | P1a.0 | NOT STARTED | - | MCPB research blocker — do before Phase 2 |
 | P1a.1 | DONE | 10/10 | Cargo workspace: `core` (lib) + `cli` (bin). 10 modules in core. |
-| P1a.2 | PLACEHOLDER | 4/10 | Creates placeholder WAV. Real cpal+BlackHole capture not yet wired. Next priority. |
+| P1a.2 | DONE | 10/10 | **Real audio capture via cpal.** Records from default input device (mic or BlackHole). Real-time downsampling to 16kHz mono. Graceful stop via AtomicBool. list_input_devices() for diagnostics. |
 | P1a.3 | DONE | 10/10 | WAV writing via hound. Temp WAV cleanup on pipeline completion. |
 | P1a.4 | DONE | 10/10 | **whisper-rs + symphonia integrated.** Real transcription working on M4 Max (146ms for 3s audio). Format conversion: m4a/mp3/ogg/wav. Feature flag for test builds without model. 5 new unit tests. |
 | P1a.5 | DONE | 10/10 | Markdown writer: YAML frontmatter, 0600 perms, collision handling, memo/meeting templates, no-speech marker. 5 tests. |
-| P1a.6 | DONE | 9/10 | CLI: record, stop, status, search, list, process, setup, logs. PID lifecycle. Signal handling (Ctrl-C). JSON output for MCPB. Missing: real audio capture blocks full 10/10. |
+| P1a.6 | DONE | 10/10 | CLI: record, stop, status, search, list, process, setup, logs. PID lifecycle. Real audio capture via cpal. Signal handling (Ctrl-C → stop + transcribe). JSON output for MCPB. |
 
 ### Chunk 2: Config + Infrastructure (P1a.7-8, P1a.14-15)
 | Bead | Status | Score | Notes |
@@ -47,8 +47,7 @@
 - [x] Chunk 4 gate: `cargo test` (41 pass), `cargo clippy` clean, `cargo fmt` clean
 
 ## Remaining for 10/10 on all beads
-- P1a.2: Replace placeholder with real cpal + BlackHole audio capture
-- P1a.8: Implement actual model download from HuggingFace
+- P1a.8: Implement actual model download from HuggingFace (currently prints manual instructions)
 - P1a.13: Create Apple Shortcut (.shortcut file)
 - P1a.14: Wire pipeline to call log_step() (currently tracing only)
 - P1a.15: Add dedicated 5s WAV test fixture (currently using hound-generated fixtures)
