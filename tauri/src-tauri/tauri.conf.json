@@ -1,0 +1,30 @@
+{
+  "$schema": "https://raw.githubusercontent.com/nicedoc/tauri/dev/crates/tauri-cli/schema.json",
+  "productName": "Minutes",
+  "identifier": "dev.getminutes.app",
+  "version": "0.1.0",
+  "build": {
+    "frontendDist": "../src",
+    "devUrl": "http://localhost:1420"
+  },
+  "app": {
+    "withGlobalTauri": true,
+    "windows": [],
+    "trayIcon": {
+      "iconPath": "icons/icon.png",
+      "iconAsTemplate": true,
+      "tooltip": "Minutes — conversation memory"
+    },
+    "security": {
+      "csp": null
+    }
+  },
+  "plugins": {
+    "shell": {
+      "open": true
+    },
+    "notification": {
+      "all": true
+    }
+  }
+}

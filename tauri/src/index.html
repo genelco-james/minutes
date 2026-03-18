@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Minutes</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      background: #1a1a1a;
+      color: #e0e0e0;
+      padding: 16px;
+      min-width: 320px;
+    }
+
+    .header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 16px;
+    }
+
+    .header h1 { font-size: 16px; font-weight: 600; color: #fff; }
+
+    .status-badge {
+      font-size: 11px;
+      padding: 2px 8px;
+      border-radius: 10px;
+      background: #333;
+      color: #888;
+    }
+
+    .status-badge.recording {
+      background: #3a1a1a;
+      color: #ff6b6b;
+      animation: pulse 1.5s infinite;
+    }
+
+    @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
+
+    .search-box {
+      width: 100%;
+      padding: 8px 12px;
+      border: 1px solid #333;
+      border-radius: 6px;
+      background: #222;
+      color: #e0e0e0;
+      font-size: 13px;
+      margin-bottom: 16px;
+    }
+
+    .search-box:focus { outline: none; border-color: #555; }
+
+    .meetings-list { list-style: none; }
+
+    .meeting-item {
+      padding: 10px 12px;
+      border-radius: 6px;
+      margin-bottom: 4px;
+      cursor: pointer;
+      transition: background 0.15s;
+    }
+
+    .meeting-item:hover { background: #2a2a2a; }
+
+    .meeting-title { font-size: 13px; font-weight: 500; color: #fff; margin-bottom: 2px; }
+    .meeting-meta { font-size: 11px; color: #888; }
+
+    .meeting-type {
+      font-size: 10px;
+      padding: 1px 6px;
+      border-radius: 8px;
+      background: #333;
+      color: #aaa;
+      margin-left: 6px;
+    }
+
+    .meeting-type.memo { background: #2a2a3a; color: #8f8fdf; }
+
+    .empty-state { text-align: center; padding: 32px; color: #666; font-size: 13px; }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <h1>Minutes</h1>
+    <span class="status-badge" id="status-badge">idle</span>
+  </div>
+
+  <input
+    class="search-box"
+    type="text"
+    placeholder="Search meetings and memos..."
+    id="search-input"
+  />
+
+  <ul class="meetings-list" id="meetings-list">
+    <li class="empty-state">Loading...</li>
+  </ul>
+
+  <script>
+    const { invoke } = window.__TAURI__.core;
+
+    // Status polling
+    async function checkStatus() {
+      try {
+        const status = await invoke('cmd_status');
+        const badge = document.getElementById('status-badge');
+        if (status.recording) {
+          badge.className = 'status-badge recording';
+          badge.textContent = 'recording';
+        } else {
+          badge.className = 'status-badge';
+          badge.textContent = 'idle';
+        }
+      } catch (e) {
+        console.error('Status check failed:', e);
+      }
+    }
+
+    // Render meetings using safe DOM methods (no innerHTML with user data)
+    function renderMeetings(meetings) {
+      const list = document.getElementById('meetings-list');
+      list.replaceChildren(); // Clear safely
+
+      if (!meetings || meetings.length === 0) {
+        const empty = document.createElement('li');
+        empty.className = 'empty-state';
+        empty.textContent = 'No meetings found';
+        list.appendChild(empty);
+        return;
+      }
+
+      for (const m of meetings) {
+        const li = document.createElement('li');
+        li.className = 'meeting-item';
+
+        const titleDiv = document.createElement('div');
+        titleDiv.className = 'meeting-title';
+        titleDiv.textContent = m.title;
+
+        const typeSpan = document.createElement('span');
+        typeSpan.className = 'meeting-type' + (m.content_type === 'memo' ? ' memo' : '');
+        typeSpan.textContent = m.content_type;
+        titleDiv.appendChild(typeSpan);
+
+        const metaDiv = document.createElement('div');
+        metaDiv.className = 'meeting-meta';
+        metaDiv.textContent = formatDate(m.date);
+
+        li.appendChild(titleDiv);
+        li.appendChild(metaDiv);
+        list.appendChild(li);
+      }
+    }
+
+    function formatDate(dateStr) {
+      if (!dateStr) return '';
+      try {
+        return new Date(dateStr).toLocaleDateString('en-US', {
+          month: 'short', day: 'numeric', year: 'numeric',
+          hour: 'numeric', minute: '2-digit'
+        });
+      } catch { return dateStr.slice(0, 10); }
+    }
+
+    // Load meetings
+    async function loadMeetings() {
+      try {
+        const meetings = await invoke('cmd_list_meetings', { limit: 20 });
+        renderMeetings(meetings);
+      } catch (e) { console.error('Load failed:', e); }
+    }
+
+    // Search with debounce
+    let searchTimeout;
+    document.getElementById('search-input').addEventListener('input', (e) => {
+      clearTimeout(searchTimeout);
+      const query = e.target.value.trim();
+      if (!query) { loadMeetings(); return; }
+      searchTimeout = setTimeout(async () => {
+        try {
+          const results = await invoke('cmd_search', { query });
+          renderMeetings(results);
+        } catch (e) { console.error('Search failed:', e); }
+      }, 300);
+    });
+
+    // Init
+    checkStatus();
+    loadMeetings();
+    setInterval(checkStatus, 5000);
+  </script>
+</body>
+</html>
