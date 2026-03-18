@@ -142,7 +142,22 @@ Works with [Obsidian](https://obsidian.md), grep, or any markdown tool. Action i
 
 ## Claude integration
 
-minutes is a native extension for the Claude ecosystem.
+minutes is a native extension for the Claude ecosystem. **No API keys needed** — Claude summarizes your meetings when you ask, using your existing Claude subscription.
+
+The pipeline captures and transcribes locally. Claude does the intelligence:
+
+```
+You: "Summarize my last meeting"
+Claude: [calls get_meeting] → reads transcript → summarizes in conversation
+
+You: "What did Alex say about pricing?"
+Claude: [calls search_meetings] → finds matches → synthesizes answer
+
+You: "Any open action items for me?"
+Claude: [calls list_meetings] → scans frontmatter → reports open items
+```
+
+No `ANTHROPIC_API_KEY`. No extra cost. Just your Claude subscription doing what it already does — but with your meeting history as context.
 
 ### Claude Desktop (MCP)
 ```json
@@ -158,8 +173,6 @@ minutes is a native extension for the Claude ecosystem.
 
 8 MCP tools: `start_recording`, `stop_recording`, `get_status`, `list_meetings`, `search_meetings`, `get_meeting`, `process_audio`, `add_note`
 
-Ask Claude: *"What did Alex say about pricing last Tuesday?"* — Claude searches your meetings and answers.
-
 ### Claude Code (Plugin)
 ```
 .claude/plugins/minutes/
@@ -170,6 +183,18 @@ Ask Claude: *"What did Alex say about pricing last Tuesday?"* — Claude searche
 
 ### Cowork / Dispatch
 MCP tools are automatically available in Cowork. From your phone via Dispatch: *"Start recording"* → Mac captures → Claude processes → summary on your phone.
+
+### Optional: automated summarization
+
+If you want summaries generated automatically in the pipeline (without asking Claude each time), you can configure a local LLM:
+
+```toml
+[summarization]
+engine = "ollama"         # Free, local, no API key
+ollama_model = "llama3.2"
+```
+
+Or use API keys for cloud LLMs — but most users won't need this since Claude handles it conversationally.
 
 ## Voice memos (iPhone → Mac)
 
@@ -193,7 +218,8 @@ Optional — minutes works out of the box.
 model = "small"           # tiny (75MB), base, small (466MB), medium, large-v3 (3.1GB)
 
 [summarization]
-engine = "claude"         # claude, openai, ollama, or none
+engine = "none"           # Default: Claude summarizes conversationally via MCP
+                          # Set to "ollama" for automatic local summaries
 ollama_url = "http://localhost:11434"
 ollama_model = "llama3.2"
 
