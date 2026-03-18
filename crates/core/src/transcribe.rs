@@ -60,7 +60,7 @@ pub fn transcribe(audio_path: &Path, config: &Config) -> Result<String, Transcri
 #[cfg(feature = "whisper")]
 fn transcribe_with_whisper(
     samples: &[f32],
-    audio_path: &Path,
+    _audio_path: &Path,
     config: &Config,
 ) -> Result<String, TranscribeError> {
     // Suppress unused warnings when whisper feature is disabled

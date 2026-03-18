@@ -149,21 +149,18 @@ fn cmd_record(title: Option<String>, config: &Config) -> Result<()> {
 
     eprintln!("Recording... (press Ctrl-C or run `minutes stop` to finish)");
 
-    // Set up signal handler for graceful shutdown
-    let (tx, rx) = std::sync::mpsc::channel();
+    // Set up stop flag for signal handler
+    let stop_flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let stop_clone = std::sync::Arc::clone(&stop_flag);
     ctrlc::set_handler(move || {
-        tx.send(()).ok();
+        eprintln!("\nStopping recording...");
+        stop_clone.store(true, std::sync::atomic::Ordering::Relaxed);
     })?;
 
-    // TODO(P1a.2): Replace with actual audio capture via cpal + BlackHole
-    // For now, create a placeholder WAV file so the pipeline can be tested
+    // Record audio from default input device
     let wav_path = minutes_core::pid::current_wav_path();
-    create_placeholder_wav(&wav_path)?;
-
-    // Wait for stop signal (Ctrl-C or SIGTERM)
-    rx.recv().ok();
-
-    eprintln!("\nStopping recording...");
+    minutes_core::capture::record_to_wav(&wav_path, stop_flag, config)
+        .map_err(|e| anyhow::anyhow!("{}", e))?;
 
     // Run pipeline on the captured audio
     let content_type = ContentType::Meeting;
@@ -457,28 +454,6 @@ fn cmd_logs(errors: bool, lines: usize) -> Result<()> {
         println!("{}", line);
     }
 
-    Ok(())
-}
-
-/// Create a small placeholder WAV file for pipeline testing.
-fn create_placeholder_wav(path: &std::path::Path) -> Result<()> {
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-
-    let spec = hound::WavSpec {
-        channels: 1,
-        sample_rate: 16000,
-        bits_per_sample: 16,
-        sample_format: hound::SampleFormat::Int,
-    };
-
-    let mut writer = hound::WavWriter::create(path, spec)?;
-    // Write 1 second of silence (16000 samples at 16kHz)
-    for _ in 0..16000 {
-        writer.write_sample(0i16)?;
-    }
-    writer.finalize()?;
     Ok(())
 }
 

@@ -20,6 +20,7 @@ thiserror = { workspace = true }
 dirs = { workspace = true }
 walkdir = { workspace = true }
 tracing = { workspace = true }
+cpal = { workspace = true }
 hound = { workspace = true }
 notify = { workspace = true }
 whisper-rs = { workspace = true, optional = true }
