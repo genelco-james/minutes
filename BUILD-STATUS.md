@@ -8,11 +8,11 @@
 ### 10/10 Sprint Beads
 | Bead | Category | Task | Status |
 |------|----------|------|--------|
-| Q.1 | Security | Replace curl with reqwest for HTTP | DEFERRED (body via stdin is sufficient for now) |
+| Q.1 | Security | Replace curl with ureq (pure Rust HTTP client) | DONE |
 | Q.2 | Code Quality | Deduplicate frontmatter parsing → shared functions in markdown.rs | DONE |
 | Q.3 | Code Quality | Make `cmd_list` delegate to `search("")` | DONE |
-| Q.4 | Code Quality | Add `///` doc comments to all pub functions | DEFERRED (nice-to-have) |
-| Q.5 | Tests | Concurrent PID race test | DEFERRED (needs flock, tracked in PLAN.md) |
+| Q.4 | Code Quality | Add `///` doc comments to all pub functions | DONE (100% coverage) |
+| Q.5 | Tests | Atomic PID with flock (fs2) — prevents TOCTOU race | DONE |
 | Q.6 | Tests | Fix logging tests to actually test I/O | DONE |
 | Q.7 | Production | Call `rotate_logs()` at startup | DONE |
 | Q.8 | Production | Make Ollama URL + model configurable | DONE |
