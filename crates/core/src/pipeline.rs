@@ -218,6 +218,15 @@ where
         user_notes.as_deref(),
         config,
     )?;
+    if let Err(error) =
+        crate::daily_notes::append_backlink(&result, frontmatter.date, summary.as_deref(), config)
+    {
+        tracing::warn!(
+            error = %error,
+            output = %result.path.display(),
+            "failed to append daily note backlink"
+        );
+    }
     let write_ms = step_start.elapsed().as_millis() as u64;
     logging::log_step(
         "write",

@@ -16,6 +16,7 @@ pub struct Config {
     pub diarization: DiarizationConfig,
     pub summarization: SummarizationConfig,
     pub search: SearchConfig,
+    pub daily_notes: DailyNotesConfig,
     pub security: SecurityConfig,
     pub watch: WatchConfig,
 }
@@ -48,6 +49,13 @@ pub struct SummarizationConfig {
 pub struct SearchConfig {
     pub engine: String,
     pub qmd_collection: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct DailyNotesConfig {
+    pub enabled: bool,
+    pub path: PathBuf,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -85,6 +93,7 @@ impl Default for Config {
             diarization: DiarizationConfig::default(),
             summarization: SummarizationConfig::default(),
             search: SearchConfig::default(),
+            daily_notes: DailyNotesConfig::default(),
             security: SecurityConfig::default(),
             watch: WatchConfig::default(),
         }
@@ -125,6 +134,15 @@ impl Default for SearchConfig {
         Self {
             engine: "builtin".into(),
             qmd_collection: None,
+        }
+    }
+}
+
+impl Default for DailyNotesConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            path: home_dir().join("meetings").join("daily"),
         }
     }
 }
@@ -219,6 +237,9 @@ impl Config {
     pub fn ensure_dirs(&self) -> std::io::Result<()> {
         std::fs::create_dir_all(&self.output_dir)?;
         std::fs::create_dir_all(self.output_dir.join("memos"))?;
+        if self.daily_notes.enabled {
+            std::fs::create_dir_all(&self.daily_notes.path)?;
+        }
         std::fs::create_dir_all(minutes_dir())?;
         std::fs::create_dir_all(minutes_dir().join("inbox"))?;
         std::fs::create_dir_all(minutes_dir().join("inbox").join("processed"))?;
@@ -246,6 +267,7 @@ mod tests {
         assert_eq!(config.diarization.engine, "none");
         assert_eq!(config.summarization.engine, "none");
         assert_eq!(config.search.engine, "builtin");
+        assert!(!config.daily_notes.enabled);
         assert_eq!(config.watch.settle_delay_ms, 2000);
         assert!(!config.watch.extensions.is_empty());
     }
@@ -274,6 +296,7 @@ model = "large-v3"
         // Other fields should be defaults
         assert_eq!(config.transcription.min_words, 3);
         assert_eq!(config.diarization.engine, "none");
+        assert!(!config.daily_notes.enabled);
     }
 
     #[test]
