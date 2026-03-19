@@ -115,6 +115,21 @@
       -webkit-app-region: no-drag;
     }
 
+    .header-chip {
+      display: none;
+      align-items: center;
+      gap: 6px;
+      padding: 5px 10px;
+      border-radius: 999px;
+      background: rgba(255, 159, 10, 0.12);
+      color: #ff9f0a;
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 0.2px;
+    }
+
+    .header-chip.active { display: inline-flex; }
+
     .status-pill {
       font-size: 11px;
       font-weight: 600;
@@ -740,6 +755,129 @@
       line-height: 1.45;
     }
 
+    /* ── Recovery view ── */
+    .recovery-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(8, 10, 16, 0.66);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+      z-index: 125;
+    }
+
+    .recovery-overlay.active { display: flex; }
+
+    .recovery-card {
+      width: min(760px, 100%);
+      max-height: calc(100vh - 40px);
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 18px;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      box-shadow: 0 24px 60px rgba(0,0,0,0.4);
+    }
+
+    .recovery-header {
+      padding: 18px 20px 14px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 12px;
+    }
+
+    .recovery-title {
+      font-size: 18px;
+      font-family: var(--font-display);
+      font-weight: 700;
+      letter-spacing: -0.2px;
+      color: var(--text);
+      margin-bottom: 6px;
+    }
+
+    .recovery-sub {
+      font-size: 12px;
+      color: var(--text-secondary);
+      line-height: 1.45;
+    }
+
+    .recovery-scroll {
+      overflow-y: auto;
+      padding: 16px 20px 20px;
+    }
+
+    .recovery-empty {
+      text-align: center;
+      color: var(--text-tertiary);
+      font-size: 12px;
+      padding: 28px 8px;
+    }
+
+    .recovery-list {
+      display: grid;
+      gap: 12px;
+    }
+
+    .recovery-item {
+      padding: 14px;
+      border-radius: 14px;
+      background: var(--bg-elevated);
+      border: 1px solid var(--border);
+    }
+
+    .recovery-item-top {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 8px;
+    }
+
+    .recovery-item-title {
+      font-size: 14px;
+      font-weight: 600;
+      color: var(--text);
+    }
+
+    .recovery-kind {
+      padding: 3px 8px;
+      border-radius: 999px;
+      background: rgba(255, 159, 10, 0.12);
+      color: #ff9f0a;
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 0.4px;
+      text-transform: uppercase;
+      flex-shrink: 0;
+    }
+
+    .recovery-item-detail {
+      font-size: 12px;
+      color: var(--text-secondary);
+      line-height: 1.45;
+    }
+
+    .recovery-item-path {
+      font-size: 11px;
+      color: var(--text-tertiary);
+      margin-top: 8px;
+      font-family: var(--font-mono);
+      word-break: break-all;
+    }
+
+    .recovery-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 10px;
+    }
+
     /* ── Footer ── */
     .footer {
       padding: 12px 20px 16px;
@@ -827,6 +965,7 @@
     </div>
     <div class="header-actions">
       <button class="btn btn-secondary btn-sm" id="btn-about">About</button>
+      <button class="header-chip" id="btn-recovery">Recovery <span id="recovery-count">0</span></button>
       <span class="status-pill" id="status-pill">idle</span>
     </div>
   </div>
@@ -926,6 +1065,22 @@
       </div>
       <div class="detail-scroll" id="detail-scroll">
         <div class="detail-empty">Select a meeting to view transcript and notes.</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Recovery -->
+  <div class="recovery-overlay" id="recovery-overlay">
+    <div class="recovery-card" role="dialog" aria-modal="true" aria-labelledby="recovery-title">
+      <div class="recovery-header">
+        <div>
+          <div class="recovery-title" id="recovery-title">Recovery Center</div>
+          <div class="recovery-sub">Retry preserved captures and watched files that failed to process, or open them directly in Finder.</div>
+        </div>
+        <button class="btn btn-secondary btn-sm" id="btn-recovery-close">Close</button>
+      </div>
+      <div class="recovery-scroll" id="recovery-scroll">
+        <div class="recovery-empty">No recovery items right now.</div>
       </div>
     </div>
   </div>
@@ -1086,6 +1241,10 @@
     const detailScroll = document.getElementById('detail-scroll');
     const openExternalBtn = document.getElementById('btn-open-external');
     const aboutOverlay = document.getElementById('about-overlay');
+    const recoveryOverlay = document.getElementById('recovery-overlay');
+    const recoveryButton = document.getElementById('btn-recovery');
+    const recoveryCount = document.getElementById('recovery-count');
+    const recoveryScroll = document.getElementById('recovery-scroll');
 
     let isRecording = false;
     let isProcessing = false;
@@ -1094,6 +1253,7 @@
     let activeSearchQuery = '';
     let currentSetup = null;
     let latestOutput = null;
+    let recoveryItems = [];
     let pollInterval = null;
     const NUM_BARS = 32;
     const audioViz = document.getElementById('audio-viz');
@@ -1200,6 +1360,117 @@
       document.getElementById('btn-open-output').textContent = isCapture ? 'Open Capture' : 'Open Meeting';
     }
 
+    function closeRecovery() {
+      recoveryOverlay.classList.remove('active');
+    }
+
+    async function loadRecoveryItems() {
+      try {
+        recoveryItems = await invoke('cmd_recovery_items');
+      } catch (e) {
+        console.error('Recovery items:', e);
+        recoveryItems = [];
+      }
+
+      recoveryCount.textContent = recoveryItems.length;
+      recoveryButton.classList.toggle('active', recoveryItems.length > 0);
+
+      recoveryScroll.replaceChildren();
+      if (!recoveryItems.length) {
+        const empty = document.createElement('div');
+        empty.className = 'recovery-empty';
+        empty.textContent = 'No recovery items right now.';
+        recoveryScroll.appendChild(empty);
+        return;
+      }
+
+      const list = document.createElement('div');
+      list.className = 'recovery-list';
+
+      for (const item of recoveryItems) {
+        const card = document.createElement('div');
+        card.className = 'recovery-item';
+
+        const top = document.createElement('div');
+        top.className = 'recovery-item-top';
+
+        const title = document.createElement('div');
+        title.className = 'recovery-item-title';
+        title.textContent = item.title || 'Recovery item';
+
+        const kind = document.createElement('div');
+        kind.className = 'recovery-kind';
+        kind.textContent = item.kind.replace(/-/g, ' ');
+
+        top.appendChild(title);
+        top.appendChild(kind);
+
+        const detail = document.createElement('div');
+        detail.className = 'recovery-item-detail';
+        detail.textContent = item.detail;
+
+        const path = document.createElement('div');
+        path.className = 'recovery-item-path';
+        path.textContent = item.path;
+
+        const actions = document.createElement('div');
+        actions.className = 'recovery-actions';
+
+        const retry = document.createElement('button');
+        retry.className = 'btn btn-secondary btn-sm';
+        retry.textContent = item.retry_type === 'memo' ? 'Retry as Memo' : 'Retry as Meeting';
+        retry.addEventListener('click', async () => {
+          try {
+            const notice = await invoke('cmd_retry_recovery', {
+              path: item.path,
+              contentType: item.retry_type
+            });
+            updateOutputNotice(notice);
+            closeRecovery();
+            loadMeetings();
+            loadRecoveryItems();
+          } catch (e) {
+            console.error('Retry recovery:', e);
+          }
+        });
+
+        const open = document.createElement('button');
+        open.className = 'btn btn-secondary btn-sm';
+        open.textContent = 'Open';
+        open.addEventListener('click', async () => {
+          try {
+            await invoke('cmd_open_file', { path: item.path });
+          } catch (e) {
+            console.error('Open recovery item:', e);
+          }
+        });
+
+        const folder = document.createElement('button');
+        folder.className = 'btn btn-secondary btn-sm';
+        folder.textContent = 'Show in Finder';
+        folder.addEventListener('click', async () => {
+          try {
+            const parent = item.path.slice(0, item.path.lastIndexOf('/'));
+            await invoke('cmd_open_file', { path: parent });
+          } catch (e) {
+            console.error('Open recovery folder:', e);
+          }
+        });
+
+        actions.appendChild(retry);
+        actions.appendChild(open);
+        actions.appendChild(folder);
+
+        card.appendChild(top);
+        card.appendChild(detail);
+        card.appendChild(path);
+        card.appendChild(actions);
+        list.appendChild(card);
+      }
+
+      recoveryScroll.appendChild(list);
+    }
+
     // ── Recording controls ──
     document.getElementById('btn-record').addEventListener('click', async () => {
       try {
@@ -1243,6 +1514,14 @@
       } catch (e) {
         console.error('Dismiss output:', e);
       }
+    });
+
+    recoveryButton.addEventListener('click', () => {
+      recoveryOverlay.classList.add('active');
+    });
+    document.getElementById('btn-recovery-close').addEventListener('click', closeRecovery);
+    recoveryOverlay.addEventListener('click', (e) => {
+      if (e.target === recoveryOverlay) closeRecovery();
     });
 
     // ── Inline note ──
@@ -1695,6 +1974,9 @@
       if (e.key === 'Escape' && aboutOverlay.classList.contains('active')) {
         closeAbout();
       }
+      if (e.key === 'Escape' && recoveryOverlay.classList.contains('active')) {
+        closeRecovery();
+      }
       if (e.key === 'Escape' && detailOverlay.classList.contains('active')) {
         closeDetailView();
       }
@@ -1711,6 +1993,7 @@
     // ── Init ──
     checkSetup();
     checkStatus();
+    loadRecoveryItems();
     checkUpcoming();
     setInterval(() => { if (!pollInterval) checkStatus(); }, 2000);
     setInterval(checkUpcoming, 60000); // Check calendar every minute

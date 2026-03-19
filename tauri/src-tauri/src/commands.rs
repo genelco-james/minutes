@@ -1,7 +1,9 @@
 use minutes_core::{Config, ContentType};
+use std::cmp::Reverse;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::SystemTime;
 
 pub struct AppState {
     pub recording: Arc<AtomicBool>,
@@ -37,6 +39,15 @@ pub struct OutputNotice {
     pub title: String,
     pub path: String,
     pub detail: String,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct RecoveryItem {
+    pub kind: String,
+    pub title: String,
+    pub path: String,
+    pub detail: String,
+    pub retry_type: String,
 }
 
 fn preserve_failed_capture(wav_path: &std::path::Path, config: &Config) -> Option<PathBuf> {
@@ -162,6 +173,91 @@ fn parse_sections(body: &str) -> Vec<MeetingSection> {
     }
 
     sections
+}
+
+fn recovery_title(path: &std::path::Path, fallback: &str) -> String {
+    path.file_stem()
+        .and_then(|stem| stem.to_str())
+        .map(|stem| stem.replace('-', " "))
+        .map(|stem| stem.trim().to_string())
+        .filter(|stem| !stem.is_empty())
+        .unwrap_or_else(|| fallback.to_string())
+}
+
+fn scan_recovery_items(config: &Config) -> Vec<RecoveryItem> {
+    let mut found: Vec<(SystemTime, RecoveryItem)> = Vec::new();
+
+    let current_wav = minutes_core::pid::current_wav_path();
+    if current_wav.exists() && !minutes_core::pid::status().recording {
+        if let Ok(metadata) = current_wav.metadata() {
+            let modified = metadata.modified().unwrap_or(SystemTime::UNIX_EPOCH);
+            found.push((
+                modified,
+                RecoveryItem {
+                    kind: "stale-recording".into(),
+                    title: "Unprocessed live recording".into(),
+                    path: current_wav.display().to_string(),
+                    detail: "Minutes found an unfinished live capture that never made it through the pipeline.".into(),
+                    retry_type: "meeting".into(),
+                },
+            ));
+        }
+    }
+
+    let failed_captures = config.output_dir.join("failed-captures");
+    if let Ok(entries) = std::fs::read_dir(&failed_captures) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_file() {
+                let modified = entry
+                    .metadata()
+                    .ok()
+                    .and_then(|m| m.modified().ok())
+                    .unwrap_or(SystemTime::UNIX_EPOCH);
+                found.push((
+                    modified,
+                    RecoveryItem {
+                        kind: "preserved-capture".into(),
+                        title: recovery_title(&path, "Preserved capture"),
+                        path: path.display().to_string(),
+                        detail:
+                            "A live recording was preserved because capture or processing failed."
+                                .into(),
+                        retry_type: "meeting".into(),
+                    },
+                ));
+            }
+        }
+    }
+
+    for watch_path in &config.watch.paths {
+        let failed_dir = watch_path.join("failed");
+        if let Ok(entries) = std::fs::read_dir(&failed_dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_file() {
+                    let modified = entry
+                        .metadata()
+                        .ok()
+                        .and_then(|m| m.modified().ok())
+                        .unwrap_or(SystemTime::UNIX_EPOCH);
+                    found.push((
+                        modified,
+                        RecoveryItem {
+                            kind: "watch-failed".into(),
+                            title: recovery_title(&path, "Failed watched file"),
+                            path: path.display().to_string(),
+                            detail: "A watched audio file failed to process and is waiting for manual retry.".into(),
+                            retry_type: config.watch.r#type.clone(),
+                        },
+                    ));
+                }
+            }
+        }
+    }
+
+    found.sort_by_key(|(modified, _)| Reverse(*modified));
+    found.into_iter().map(|(_, item)| item).collect()
 }
 
 /// Start recording in a background thread.
@@ -421,6 +517,48 @@ pub fn cmd_clear_latest_output(state: tauri::State<AppState>) {
 }
 
 #[tauri::command]
+pub fn cmd_recovery_items() -> serde_json::Value {
+    let config = Config::load();
+    serde_json::to_value(scan_recovery_items(&config)).unwrap_or(serde_json::json!([]))
+}
+
+#[tauri::command]
+pub fn cmd_retry_recovery(
+    state: tauri::State<AppState>,
+    path: String,
+    content_type: String,
+) -> Result<OutputNotice, String> {
+    if recording_active(&state.recording) || state.processing.load(Ordering::Relaxed) {
+        return Err("Finish the current recording before retrying recovery items.".into());
+    }
+
+    let config = Config::load();
+    let audio_path = PathBuf::from(&path);
+    if !audio_path.exists() {
+        return Err(format!("Recovery item not found: {}", path));
+    }
+
+    let ct = match content_type.as_str() {
+        "meeting" => ContentType::Meeting,
+        "memo" => ContentType::Memo,
+        other => return Err(format!("Unsupported recovery type: {}", other)),
+    };
+
+    let result =
+        minutes_core::pipeline::process_with_progress(&audio_path, ct, None, &config, |_| {})
+            .map_err(|e| e.to_string())?;
+
+    let notice = OutputNotice {
+        kind: "saved".into(),
+        title: result.title.clone(),
+        path: result.path.display().to_string(),
+        detail: "Recovery item was processed successfully.".into(),
+    };
+    set_latest_output(&state.latest_output, Some(notice.clone()));
+    Ok(notice)
+}
+
+#[tauri::command]
 pub fn cmd_get_meeting_detail(path: String) -> Result<MeetingDetail, String> {
     let config = Config::load();
     let meeting_path = std::path::PathBuf::from(&path);
@@ -607,6 +745,36 @@ mod tests {
         let current = latest_output.lock().unwrap().clone().unwrap();
         assert_eq!(current.title, "Demo");
         assert_eq!(current.path, "/tmp/demo.md");
+    }
+
+    #[test]
+    fn scan_recovery_items_finds_failed_capture_and_watch_file() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let watch_dir = dir.path().join("watch");
+        let failed_dir = watch_dir.join("failed");
+        let output_dir = dir.path().join("meetings");
+        let failed_captures = output_dir.join("failed-captures");
+        std::fs::create_dir_all(&failed_dir).unwrap();
+        std::fs::create_dir_all(&failed_captures).unwrap();
+
+        let failed_watch = failed_dir.join("idea.m4a");
+        let failed_capture = failed_captures.join("capture.wav");
+        std::fs::write(&failed_watch, "watch").unwrap();
+        std::fs::write(&failed_capture, "capture").unwrap();
+
+        let config = Config {
+            output_dir: output_dir.clone(),
+            watch: minutes_core::config::WatchConfig {
+                paths: vec![watch_dir],
+                ..Config::default().watch
+            },
+            ..Config::default()
+        };
+
+        let items = scan_recovery_items(&config);
+        assert_eq!(items.len(), 2);
+        assert!(items.iter().any(|item| item.kind == "watch-failed"));
+        assert!(items.iter().any(|item| item.kind == "preserved-capture"));
     }
 
     #[test]
