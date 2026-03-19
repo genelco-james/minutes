@@ -401,6 +401,70 @@ server.tool(
   }
 );
 
+// ── Tool: get_person_profile ───────────────────────────────
+
+server.tool(
+  "get_person_profile",
+  "Build a first-pass profile for a person across meetings using structured intent data.",
+  {
+    name: z.string().describe("Person / attendee name to profile"),
+  },
+  async ({ name }) => {
+    const { stdout, stderr } = await runMinutes(["person", name]);
+    const profile = parseJsonOutput(stdout);
+
+    if (!profile || typeof profile !== "object") {
+      return { content: [{ type: "text" as const, text: stderr || stdout }] };
+    }
+
+    const topics = Array.isArray(profile.top_topics) ? profile.top_topics : [];
+    const openIntents = Array.isArray(profile.open_intents) ? profile.open_intents : [];
+    const recentMeetings = Array.isArray(profile.recent_meetings)
+      ? profile.recent_meetings
+      : [];
+
+    if (topics.length === 0 && openIntents.length === 0 && recentMeetings.length === 0) {
+      return { content: [{ type: "text" as const, text: `No profile data found for ${name}.` }] };
+    }
+
+    const sections = [];
+    if (topics.length > 0) {
+      sections.push(
+        "Top topics:\n" +
+          topics.map((topic: any) => `- ${topic.topic} (${topic.count})`).join("\n")
+      );
+    }
+    if (openIntents.length > 0) {
+      sections.push(
+        "Open commitments/actions:\n" +
+          openIntents
+            .map(
+              (intent: any) =>
+                `- ${intent.kind}: ${intent.what}${intent.by_date ? ` by ${intent.by_date}` : ""}`
+            )
+            .join("\n")
+      );
+    }
+    if (recentMeetings.length > 0) {
+      sections.push(
+        "Recent meetings:\n" +
+          recentMeetings
+            .map((meeting: any) => `- ${meeting.date} — ${meeting.title}`)
+            .join("\n")
+      );
+    }
+
+    return {
+      content: [
+        {
+          type: "text" as const,
+          text: `Profile for ${profile.name}:\n\n${sections.join("\n\n")}`,
+        },
+      ],
+    };
+  }
+);
+
 // ── Tool: get_meeting ───────────────────────────────────────
 
 server.tool(

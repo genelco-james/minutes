@@ -97,6 +97,12 @@ enum Commands {
         stale_after_days: i64,
     },
 
+    /// Build a first-pass profile for a person across meetings
+    Person {
+        /// Person / attendee name to profile
+        name: String,
+    },
+
     /// List recent meetings and voice memos
     List {
         /// Maximum number of results
@@ -212,6 +218,7 @@ fn main() -> Result<()> {
             owner,
             stale_after_days,
         } => cmd_consistency(owner.as_deref(), stale_after_days, &config),
+        Commands::Person { name } => cmd_person(&name, &config),
         Commands::List {
             limit,
             content_type,
@@ -588,6 +595,48 @@ fn cmd_consistency(owner: Option<&str>, stale_after_days: i64, config: &Config) 
     }
 
     println!("{}", serde_json::to_string_pretty(&report)?);
+    Ok(())
+}
+
+fn cmd_person(name: &str, config: &Config) -> Result<()> {
+    let profile =
+        minutes_core::search::person_profile(config, name).map_err(|e| anyhow::anyhow!("{}", e))?;
+
+    if profile.recent_meetings.is_empty()
+        && profile.open_intents.is_empty()
+        && profile.recent_decisions.is_empty()
+    {
+        eprintln!("No profile data found for {}.", name);
+        println!("{}", serde_json::to_string_pretty(&profile)?);
+        return Ok(());
+    }
+
+    eprintln!("Profile for {}:", profile.name);
+    if !profile.top_topics.is_empty() {
+        eprintln!(
+            "  Top topics: {}",
+            profile
+                .top_topics
+                .iter()
+                .map(|topic| format!("{} ({})", topic.topic, topic.count))
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
+    }
+    if !profile.open_intents.is_empty() {
+        eprintln!("  Open commitments/actions: {}", profile.open_intents.len());
+    }
+    if !profile.recent_decisions.is_empty() {
+        eprintln!("  Recent decisions: {}", profile.recent_decisions.len());
+    }
+    if !profile.recent_meetings.is_empty() {
+        eprintln!("  Recent meetings:");
+        for meeting in &profile.recent_meetings {
+            eprintln!("    {} — {}", meeting.date, meeting.title);
+        }
+    }
+
+    println!("{}", serde_json::to_string_pretty(&profile)?);
     Ok(())
 }
 

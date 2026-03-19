@@ -69,6 +69,29 @@ pub struct ConsistencyReport {
     pub stale_commitments: Vec<StaleCommitment>,
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct TopicSummary {
+    pub topic: String,
+    pub count: usize,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct MeetingReference {
+    pub path: PathBuf,
+    pub title: String,
+    pub date: String,
+    pub content_type: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct PersonProfile {
+    pub name: String,
+    pub recent_meetings: Vec<MeetingReference>,
+    pub open_intents: Vec<IntentResult>,
+    pub recent_decisions: Vec<ReportEntry>,
+    pub top_topics: Vec<TopicSummary>,
+}
+
 pub struct SearchFilters {
     pub content_type: Option<String>,
     pub since: Option<String>,
@@ -279,6 +302,151 @@ pub fn consistency_report(
     Ok(ConsistencyReport {
         decision_conflicts,
         stale_commitments,
+    })
+}
+
+pub fn person_profile(config: &Config, person: &str) -> Result<PersonProfile, SearchError> {
+    let dir = &config.output_dir;
+    if !dir.exists() {
+        return Err(SearchError::DirNotFound(dir.display().to_string()));
+    }
+
+    let person_lower = person.to_lowercase();
+    let mut parsed_frontmatters = Vec::new();
+    for entry in WalkDir::new(dir)
+        .into_iter()
+        .filter_map(|e| e.ok())
+        .filter(|e| e.path().extension().is_some_and(|ext| ext == "md"))
+    {
+        let path = entry.path();
+        let content = match std::fs::read_to_string(path) {
+            Ok(content) => content,
+            Err(e) => {
+                tracing::warn!(path = %path.display(), error = %e, "skipping file in person profile");
+                continue;
+            }
+        };
+
+        let (frontmatter_str, _) = split_frontmatter(&content);
+        if frontmatter_str.is_empty() {
+            continue;
+        }
+
+        match serde_yaml::from_str::<Frontmatter>(frontmatter_str) {
+            Ok(frontmatter) => parsed_frontmatters.push((path.to_path_buf(), frontmatter)),
+            Err(e) => {
+                tracing::warn!(path = %path.display(), error = %e, "skipping malformed frontmatter in person profile");
+            }
+        }
+    }
+
+    parsed_frontmatters.sort_by(|a, b| b.1.date.cmp(&a.1.date));
+
+    let mut recent_meetings = Vec::new();
+    let mut open_intents = Vec::new();
+    let mut recent_decisions = Vec::new();
+    let mut topic_counts: std::collections::HashMap<String, usize> =
+        std::collections::HashMap::new();
+
+    for (path, frontmatter) in parsed_frontmatters {
+        let content_type = match frontmatter.r#type {
+            crate::markdown::ContentType::Meeting => "meeting".to_string(),
+            crate::markdown::ContentType::Memo => "memo".to_string(),
+        };
+        let date = frontmatter.date.to_rfc3339();
+
+        let attendee_match = frontmatter
+            .attendees
+            .iter()
+            .any(|attendee| attendee.to_lowercase().contains(&person_lower));
+        let owned_intent_match = frontmatter.intents.iter().any(|intent| {
+            intent
+                .who
+                .as_ref()
+                .map(|who| who.to_lowercase().contains(&person_lower))
+                .unwrap_or(false)
+        });
+
+        if !(attendee_match || owned_intent_match) {
+            continue;
+        }
+
+        recent_meetings.push(MeetingReference {
+            path: path.clone(),
+            title: frontmatter.title.clone(),
+            date: date.clone(),
+            content_type: content_type.clone(),
+        });
+
+        for decision in &frontmatter.decisions {
+            recent_decisions.push(ReportEntry {
+                path: path.clone(),
+                title: frontmatter.title.clone(),
+                date: date.clone(),
+                what: decision.text.clone(),
+                who: None,
+                by_date: None,
+            });
+
+            let topic = decision
+                .topic
+                .clone()
+                .unwrap_or_else(|| normalize_topic(&decision.text));
+            if !topic.is_empty() {
+                *topic_counts.entry(topic).or_insert(0) += 1;
+            }
+        }
+
+        for intent in &frontmatter.intents {
+            let owned_by_person = intent
+                .who
+                .as_ref()
+                .map(|who| who.to_lowercase().contains(&person_lower))
+                .unwrap_or(false);
+
+            if owned_by_person
+                && intent.status == "open"
+                && matches!(intent.kind, IntentKind::ActionItem | IntentKind::Commitment)
+            {
+                open_intents.push(IntentResult {
+                    path: path.clone(),
+                    title: frontmatter.title.clone(),
+                    date: date.clone(),
+                    content_type: content_type.clone(),
+                    kind: intent.kind,
+                    what: intent.what.clone(),
+                    who: intent.who.clone(),
+                    status: intent.status.clone(),
+                    by_date: intent.by_date.clone(),
+                });
+            }
+
+            if attendee_match || owned_by_person {
+                let topic = normalize_topic(&intent.what);
+                if !topic.is_empty() {
+                    *topic_counts.entry(topic).or_insert(0) += 1;
+                }
+            }
+        }
+    }
+
+    recent_meetings.truncate(5);
+    recent_decisions.truncate(5);
+    open_intents.truncate(10);
+
+    let mut top_topics: Vec<TopicSummary> = topic_counts
+        .into_iter()
+        .map(|(topic, count)| TopicSummary { topic, count })
+        .collect();
+    top_topics.sort_by(|a, b| b.count.cmp(&a.count).then_with(|| a.topic.cmp(&b.topic)));
+    top_topics.truncate(5);
+
+    Ok(PersonProfile {
+        name: person.to_string(),
+        recent_meetings,
+        open_intents,
+        recent_decisions,
+        top_topics,
     })
 }
 
@@ -779,5 +947,35 @@ mod tests {
             Some("case")
         );
         assert!(report.stale_commitments[0].meetings_since >= 3);
+    }
+
+    #[test]
+    fn person_profile_aggregates_recent_meetings_topics_and_open_intents() {
+        let dir = TempDir::new().unwrap();
+        create_test_file(
+            dir.path(),
+            "2026-03-17-a.md",
+            "---\ntitle: Pricing Review\ntype: meeting\ndate: 2026-03-17T12:00:00-07:00\nduration: 42m\nstatus: complete\ntags: []\nattendees: [Alex]\npeople: []\naction_items: []\ndecisions:\n  - text: Launch pricing at monthly billing per month\n    topic: pricing\nintents:\n  - kind: commitment\n    what: Share revised pricing model\n    who: Alex\n    status: open\n    by_date: Tuesday\n---\n\n## Transcript\n\nWe discussed pricing.\n",
+        );
+        create_test_file(
+            dir.path(),
+            "2026-03-20-b.md",
+            "---\ntitle: Onboarding Follow-up\ntype: meeting\ndate: 2026-03-20T12:00:00-07:00\nduration: 30m\nstatus: complete\ntags: []\nattendees: [Alex]\npeople: []\naction_items: []\ndecisions: []\nintents:\n  - kind: action-item\n    what: Review onboarding copy\n    who: Alex\n    status: open\n    by_date: Friday\n---\n\n## Transcript\n\nWe discussed onboarding.\n",
+        );
+
+        let config = Config {
+            output_dir: dir.path().to_path_buf(),
+            ..Config::default()
+        };
+
+        let profile = person_profile(&config, "sarah").unwrap();
+        assert_eq!(profile.name, "sarah");
+        assert_eq!(profile.recent_meetings.len(), 2);
+        assert_eq!(profile.open_intents.len(), 2);
+        assert_eq!(profile.recent_decisions.len(), 1);
+        assert!(profile
+            .top_topics
+            .iter()
+            .any(|topic| topic.topic == "pricing"));
     }
 }
