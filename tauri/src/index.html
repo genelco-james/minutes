@@ -1674,7 +1674,10 @@
               <option value="medium">medium — 1.5 GB, great quality</option>
               <option value="large-v3">large-v3 — 3.1 GB, best quality</option>
             </select>
-            <div class="about-controls-meta" id="settings-model-status"></div>
+            <div style="display: flex; align-items: center; gap: 8px; margin-top: 4px;">
+              <div class="about-controls-meta" id="settings-model-status" style="flex: 1; margin: 0;"></div>
+              <button class="btn btn-secondary btn-sm" id="btn-download-model" style="white-space: nowrap; display: none;">Download</button>
+            </div>
           </div>
         </div>
         <div class="about-controls">
@@ -2885,7 +2888,12 @@
         document.getElementById('settings-config-path').textContent = s.config_path;
         document.getElementById('settings-whisper-model').value = s.transcription.model;
         const dl = s.transcription.downloaded_models || [];
-        document.getElementById('settings-model-status').textContent = dl.length ? 'Downloaded: ' + dl.join(', ') : 'No models downloaded yet.';
+        const selectedModel = s.transcription.model;
+        const isDownloaded = dl.includes(selectedModel);
+        document.getElementById('settings-model-status').textContent = isDownloaded
+          ? 'Downloaded: ' + dl.join(', ')
+          : dl.length ? 'Downloaded: ' + dl.join(', ') + '  •  "' + selectedModel + '" not yet downloaded' : 'No models downloaded yet.';
+        document.getElementById('btn-download-model').style.display = isDownloaded ? 'none' : '';
         setSettingsToggle('settings-diarization', s.diarization.engine !== 'none');
         document.getElementById('settings-summarization-engine').value = s.summarization.engine;
         updateSumStatus(s);
@@ -2932,7 +2940,33 @@
       } catch(e) { document.getElementById('settings-storage-info').textContent = 'Could not load.'; }
     }
     // Settings change handlers
-    document.getElementById('settings-whisper-model').addEventListener('change', (e) => invoke('cmd_set_setting', {section:'transcription',key:'model',value:e.target.value}));
+    document.getElementById('settings-whisper-model').addEventListener('change', async (e) => {
+      await invoke('cmd_set_setting', {section:'transcription',key:'model',value:e.target.value});
+      const s = await invoke('cmd_get_settings');
+      const dl = s.transcription.downloaded_models || [];
+      const isDownloaded = dl.includes(e.target.value);
+      document.getElementById('settings-model-status').textContent = isDownloaded
+        ? 'Downloaded: ' + dl.join(', ')
+        : dl.length ? 'Downloaded: ' + dl.join(', ') + '  •  "' + e.target.value + '" not yet downloaded' : 'No models downloaded yet.';
+      document.getElementById('btn-download-model').style.display = isDownloaded ? 'none' : '';
+    });
+    document.getElementById('btn-download-model').addEventListener('click', async () => {
+      const model = document.getElementById('settings-whisper-model').value;
+      const btn = document.getElementById('btn-download-model');
+      const status = document.getElementById('settings-model-status');
+      btn.disabled = true;
+      btn.textContent = 'Downloading...';
+      status.textContent = 'Downloading ' + model + '... this may take a minute.';
+      try {
+        const result = await invoke('cmd_download_model', { model });
+        status.textContent = result;
+        btn.style.display = 'none';
+      } catch (e) {
+        status.textContent = 'Download failed: ' + e;
+      }
+      btn.disabled = false;
+      btn.textContent = 'Download';
+    });
     document.getElementById('settings-diarization').addEventListener('click', async () => {
       const s = await invoke('cmd_get_settings');
       const next = s.diarization.engine==='none'?'pyannote':'none';
