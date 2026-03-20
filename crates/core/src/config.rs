@@ -21,6 +21,7 @@ pub struct Config {
     pub watch: WatchConfig,
     pub assistant: AssistantConfig,
     pub screen_context: ScreenContextConfig,
+    pub call_detection: CallDetectionConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -93,6 +94,15 @@ pub struct AssistantConfig {
     pub agent_args: Vec<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct CallDetectionConfig {
+    pub enabled: bool,
+    pub poll_interval_secs: u64,
+    pub cooldown_minutes: u64,
+    pub apps: Vec<String>,
+}
+
 impl Default for ScreenContextConfig {
     fn default() -> Self {
         Self {
@@ -108,6 +118,23 @@ impl Default for AssistantConfig {
         Self {
             agent: "claude".into(),
             agent_args: vec![],
+        }
+    }
+}
+
+impl Default for CallDetectionConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            poll_interval_secs: 3,
+            cooldown_minutes: 5,
+            apps: vec![
+                "zoom.us".into(),
+                "Microsoft Teams".into(),
+                "FaceTime".into(),
+                "Webex".into(),
+                "Slack".into(),
+            ],
         }
     }
 }
@@ -135,6 +162,7 @@ impl Default for Config {
             watch: WatchConfig::default(),
             assistant: AssistantConfig::default(),
             screen_context: ScreenContextConfig::default(),
+            call_detection: CallDetectionConfig::default(),
         }
     }
 }

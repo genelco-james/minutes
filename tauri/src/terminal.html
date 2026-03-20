@@ -91,7 +91,7 @@
 
     #terminal-container {
       flex: 1;
-      padding: 4px;
+      padding: 8px 4px 4px 4px;
       overflow: hidden;
     }
 
@@ -138,6 +138,7 @@
 
   <script src="vendor/xterm/xterm.js"></script>
   <script src="vendor/xterm/xterm-addon-fit.js"></script>
+  <script src="vendor/xterm/minutes-theme.js"></script>
   <script>
     (async function() {
     const { invoke } = window.__TAURI__.core;
@@ -159,30 +160,7 @@
 
     // Initialize xterm.js
     const term = new Terminal({
-      theme: {
-        background: '#1c1c1e',
-        foreground: '#f5f5f7',
-        cursor: '#0a84ff',
-        cursorAccent: '#1c1c1e',
-        selectionBackground: 'rgba(10, 132, 255, 0.3)',
-        selectionForeground: '#f5f5f7',
-        black: '#1c1c1e',
-        red: '#ff453a',
-        green: '#30d158',
-        yellow: '#ffd60a',
-        blue: '#0a84ff',
-        magenta: '#bf5af2',
-        cyan: '#64d2ff',
-        white: '#f5f5f7',
-        brightBlack: '#636366',
-        brightRed: '#ff6961',
-        brightGreen: '#4cd964',
-        brightYellow: '#ffe620',
-        brightBlue: '#409cff',
-        brightMagenta: '#da8aff',
-        brightCyan: '#70d7ff',
-        brightWhite: '#ffffff',
-      },
+      theme: window.MINUTES_XTERM_THEME,
       fontFamily: "'SF Mono', Menlo, monospace",
       fontSize: 13,
       lineHeight: 1.2,

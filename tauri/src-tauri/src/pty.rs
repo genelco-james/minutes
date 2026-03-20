@@ -26,6 +26,9 @@ pub struct SpawnConfig {
     pub cwd: PathBuf,
     pub context_dir: PathBuf,
     pub title: String,
+    /// Tauri window label to emit PTY data events to. Defaults to "main"
+    /// so the embedded Recall panel receives output.
+    pub target_window: String,
 }
 
 #[derive(Default)]
@@ -146,10 +149,10 @@ impl PtyManager {
             .map_err(|e| format!("Failed to get PTY reader: {}", e))?;
 
         // Reader thread: PTY stdout → base64 → Tauri event
-        // Use emit_to to target the specific terminal window by its label
+        // Emit to the target window (typically "main" for the embedded Recall panel)
         let session_id = cfg.session_id;
         let context_dir = cfg.context_dir;
-        let window_label = session_id.clone(); // Window label matches session_id
+        let window_label = cfg.target_window;
         let event_name = format!("pty:data:{}", session_id);
         let exit_event = format!("pty:exit:{}", session_id);
         let app_handle = cfg.app_handle;

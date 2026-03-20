@@ -1,5 +1,6 @@
 # Private strategy docs (not for open-source repo)
 .claude/x1-strategy.md
+.claude/growth-strategy.md
 
 # Build artifacts
 target/

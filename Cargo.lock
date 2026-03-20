@@ -2385,6 +2385,8 @@ dependencies = [
  "tauri-plugin-pty",
  "tauri-plugin-shell",
  "tempfile",
+ "ureq",
+ "walkdir",
 ]
 
 [[package]]
@@ -2409,6 +2411,7 @@ dependencies = [
 name = "minutes-core"
 version = "0.1.0"
 dependencies = [
+ "base64 0.22.1",
  "chrono",
  "cpal",
  "dirs",

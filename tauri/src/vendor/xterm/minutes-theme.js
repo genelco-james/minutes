@@ -1,0 +1,26 @@
+// Shared xterm.js theme for Minutes — used by both index.html (Recall panel)
+// and terminal.html (standalone fallback).
+window.MINUTES_XTERM_THEME = {
+  background: '#1c1c1e',
+  foreground: '#f5f5f7',
+  cursor: '#0a84ff',
+  cursorAccent: '#1c1c1e',
+  selectionBackground: 'rgba(10, 132, 255, 0.3)',
+  selectionForeground: '#f5f5f7',
+  black: '#1c1c1e',
+  red: '#ff453a',
+  green: '#30d158',
+  yellow: '#ffd60a',
+  blue: '#0a84ff',
+  magenta: '#bf5af2',
+  cyan: '#64d2ff',
+  white: '#f5f5f7',
+  brightBlack: '#636366',
+  brightRed: '#ff6961',
+  brightGreen: '#4cd964',
+  brightYellow: '#ffe620',
+  brightBlue: '#409cff',
+  brightMagenta: '#da8aff',
+  brightCyan: '#70d7ff',
+  brightWhite: '#ffffff',
+};

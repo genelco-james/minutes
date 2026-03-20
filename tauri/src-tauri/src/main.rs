@@ -8,6 +8,7 @@ use tauri::{
     Emitter, Manager, WebviewUrl, WebviewWindowBuilder,
 };
 
+mod call_detect;
 mod commands;
 mod context;
 mod pty;
@@ -116,6 +117,8 @@ fn main() {
     let discard_short_hotkey_capture = Arc::new(AtomicBool::new(false));
     let screen_share_hidden = Arc::new(AtomicBool::new(true));
     let recording_clone = recording.clone();
+    let recording_for_detector = recording.clone();
+    let processing_clone = processing.clone();
     let stop_clone = stop_flag.clone();
 
     tauri::Builder::default()
@@ -448,6 +451,17 @@ fn main() {
                 .build(app)?;
 
             update_tray_state(app.handle(), initial_recording);
+
+            // Start call detection background loop
+            {
+                let config = minutes_core::config::Config::load();
+                let detector = Arc::new(call_detect::CallDetector::new(config.call_detection));
+                detector.start(
+                    app.handle().clone(),
+                    recording_for_detector,
+                    processing_clone,
+                );
+            }
 
             Ok(())
         })

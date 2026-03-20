@@ -2,7 +2,7 @@
 
 > **Name**: `minutes`
 > **Tagline**: Every meeting, every idea, every voice note — searchable by your AI
-> **Domain**: TBD — check useminutes.dev, minutescli.dev, minutes.sh at Cloudflare
+> **Domain**: useminutes.dev (primary) + useminutes.app (desktop landing page)
 > **Registries**: crates.io (available), PyPI (available), npm (@minutes/cli or scoped)
 > **Created**: 2026-03-17
 > **Author**: Mat Silverstein
@@ -22,16 +22,16 @@ Build the intelligence **inside the AI**, not next to it. Granola and Meetily ar
 
 The pipeline is the product, not the meeting. The same transcribe → summarize → store → search pipeline works on a 45-minute team standup and a 30-second voice memo recorded while walking the dog. Meetings are episodic (3-5/week); voice memos are constant. This turns Minutes from "a tool I use during meetings" into "a tool I think with every day."
 
-> "Claude, what did Alex say about pricing in last Tuesday's call?" just works.
+> "Claude, what did Alex say about the timeline in last Tuesday's call?" just works.
 > "Claude, what was that idea I had about onboarding while driving yesterday?" also works.
 
 ### Why Now
 
 - Existing meeting tools are cloud-first and increasingly paywalled
-- Meetily (10K stars) has no diarization, no knowledge graph, no AI agent integration, no mobile
-- MCPB is brand new — first meeting tool as a Claude extension wins mindshare
-- Claude Cowork + Dispatch enables mobile meeting recording (phone → Mac pipeline)
-- QMD growing fast — knowledge graph integration is a differentiator
+- Open-source alternatives lack diarization, knowledge graph integration, and AI agent support
+- MCP is brand new — first meeting memory tool as an AI extension wins mindshare
+- Claude Desktop + Cowork + Dispatch enables mobile-triggered recording (phone → Mac pipeline)
+- Knowledge graph integration (QMD/Obsidian/PARA) is a differentiator no one else has
 - Tauri v2 + Rust are mature for cross-platform native apps
 
 ---
@@ -87,23 +87,23 @@ The pipeline is the product, not the meeting. The same transcribe → summarize 
 │  │ ~/meetings/2026-03-17-advisor-pricing-call.md                   │ │
 │  │ ┌────────────────────────────────────────────────────────────┐  │ │
 │  │ │ ---                                                        │  │ │
-│  │ │ title: Q2 Planning Discussion                          │  │ │
+│  │ │ title: Q2 Planning Discussion                                │  │ │
 │  │ │ date: 2026-03-17T14:00:00                                  │  │ │
 │  │ │ duration: 42m                                               │  │ │
-│  │ │ attendees: [Jordan M., User]                               │  │ │
+│  │ │ attendees: [Alex K., Jordan M.]                            │  │ │
 │  │ │ calendar_event: Team Weekly Sync                              │  │ │
-│  │ │ tags: [pricing, advisor]                                │  │ │
-│  │ │ people: [[jordan-m], [[mat]]]                        │  │ │
+│  │ │ tags: [planning, roadmap]                               │  │ │
+│  │ │ people: [[alex-k], [[jordan-m]]]                            │  │ │
 │  │ │ ---                                                         │  │ │
 │  │ │                                                             │  │ │
 │  │ │ ## Summary                                                  │  │ │
-│  │ │ - Agreed to price advisor platform at annual billing/mo minimum       │  │ │
+│  │ │ - Agreed on Q2 launch timeline for the new API              │  │ │
 │  │ │                                                             │  │ │
 │  │ │ ## Decisions                                                │  │ │
 │  │ │ - [x] Advisor pricing must pass Molly fairness test       │  │ │
 │  │ │                                                             │  │ │
 │  │ │ ## Action Items                                             │  │ │
-│  │ │ - [ ] @user: Send pricing doc to Alex by Friday             │  │ │
+│  │ │ - [ ] @user: Send tech spec to Alex by Friday               │  │ │
 │  │ │ - [ ] @case: Review competitor pricing grid                │  │ │
 │  │ │                                                             │  │ │
 │  │ │ ## Transcript                                               │  │ │
@@ -716,6 +716,180 @@ A capture-experience feature is not done when the UI exists. It is done when:
 
 ---
 
+## Auto-Detect Calls & Privacy Hardening
+
+### Call Detection — "Just tap to start"
+
+**Goal**: When you join a Zoom, Teams, Meet, or FaceTime call, Minutes shows a macOS notification asking if you want to transcribe. Tap it to start recording. No setup, no remembering to hit record.
+
+#### Detection Strategy
+
+```
+┌─────────────────────────────────────────────────────────┐
+│                    DETECTION LOOP                         │
+│                   (every 3 seconds)                       │
+│                                                           │
+│  1. Check running processes for call apps                 │
+│     ┌──────────────────────────────────────┐              │
+│     │ zoom.us, Microsoft Teams, FaceTime,  │              │
+│     │ Google Chrome (meet.google.com tab),  │              │
+│     │ Webex, Slack (huddle)                │              │
+│     └──────────────────────────────────────┘              │
+│                    │                                      │
+│  2. Check if app is using microphone                      │
+│     (via IOKit / CoreAudio device listener)               │
+│                    │                                      │
+│  3. Both true = CALL DETECTED                             │
+│     ┌──────────────────────────────────────┐              │
+│     │ Show notification:                   │              │
+│     │ "Zoom call detected.                 │              │
+│     │  Tap to start recording."            │              │
+│     └──────────────────────────────────────┘              │
+│                    │                                      │
+│  4. User taps → cmd_start_recording(Meeting)              │
+│     User ignores → cooldown 5 min for this app            │
+│                                                           │
+│  5. When call app releases mic → offer to stop            │
+└─────────────────────────────────────────────────────────┘
+```
+
+#### Why Two Signals (Process + Mic)
+
+- Process alone: too many false positives (Zoom open but no call)
+- Mic alone: too many false positives (dictation, voice memos, music apps)
+- Both together: very high confidence — an app known to do calls is actively using the mic
+
+#### Implementation — Rust Side
+
+**New file**: `tauri/src-tauri/src/call_detect.rs`
+
+```
+pub struct CallDetector {
+    enabled: AtomicBool,
+    last_notified_app: Mutex<Option<(String, Instant)>>,  // cooldown tracking
+    poll_interval: Duration,  // default 3s
+}
+
+// Known call apps and their process names
+const CALL_APPS: &[(&str, &str)] = &[
+    ("zoom.us", "Zoom"),
+    ("Microsoft Teams", "Teams"),
+    ("FaceTime", "FaceTime"),
+    ("Google Chrome", "Google Meet"),  // needs URL check via AppleScript
+    ("Webex", "Webex"),
+    ("Slack", "Slack Huddle"),
+];
+
+impl CallDetector {
+    // Poll loop — runs in background thread, started from main.rs setup
+    pub fn start(self: Arc<Self>, app: AppHandle, recording: Arc<AtomicBool>) {
+        std::thread::spawn(move || {
+            loop {
+                if self.enabled.load(Ordering::Relaxed) && !recording.load(Ordering::Relaxed) {
+                    if let Some(app_name) = self.detect_active_call() {
+                        if !self.in_cooldown(&app_name) {
+                            self.notify_call_detected(&app, &app_name);
+                        }
+                    }
+                }
+                std::thread::sleep(self.poll_interval);
+            }
+        });
+    }
+
+    fn detect_active_call(&self) -> Option<String> {
+        // 1. Get running process names via sysctl/NSRunningApplication
+        // 2. Check each against CALL_APPS
+        // 3. For matching processes, check mic usage via CoreAudio
+        // 4. Return first match that has mic active
+    }
+
+    fn check_mic_in_use() -> bool {
+        // Use CoreAudio HAL: AudioObjectGetPropertyData
+        // with kAudioDevicePropertyDeviceIsRunningSomewhere
+        // on the default input device
+    }
+
+    fn notify_call_detected(&self, app: &AppHandle, app_name: &str) {
+        // macOS notification with action button
+        show_user_notification(
+            &format!("{} call detected", app_name),
+            "Tap to start recording with Minutes"
+        );
+        // Also emit event to frontend for in-app prompt
+        app.emit("call:detected", app_name).ok();
+        self.set_cooldown(app_name);
+    }
+}
+```
+
+#### Implementation — Frontend Side
+
+In `index.html`, listen for `call:detected` event:
+- Show a banner at the top of the main window: "[Zoom icon] Zoom call detected — **Start Recording**"
+- Banner has "Start Recording" button and "Dismiss" (sets cooldown)
+- If user clicks Start, calls `cmd_start_recording` with mode `Meeting`
+- Banner auto-dismisses after 30s if not acted on
+
+#### Config
+
+```toml
+[call_detection]
+enabled = true                    # master toggle
+poll_interval_secs = 3            # how often to check
+cooldown_minutes = 5              # don't re-prompt for same app
+apps = ["zoom.us", "Microsoft Teams", "FaceTime", "Google Chrome", "Webex", "Slack"]
+```
+
+#### End-of-Call Detection
+
+When the call app releases the mic (CoreAudio property listener fires), and Minutes is recording:
+1. Wait 10s grace period (in case of brief mic drops)
+2. If mic still released, show notification: "Call ended. Stop recording?"
+3. If user doesn't respond in 60s, auto-stop and process
+
+#### What Makes This Better Than Competitors
+
+- **No always-on mic listening** — we poll process list + mic state, never capture audio until user opts in
+- **Per-call consent** — you choose each time, not a blanket "record everything" setting
+- **Works with any call app** — config-driven list, not hardcoded to 3 vendors
+- **CLI parity** — `minutes watch --calls` flag for headless/CLI users who want auto-detect without the Tauri app
+
+#### Build Order
+
+1. `call_detect.rs` — process detection + mic check (pure Rust, no UI)
+2. Background thread in `main.rs` setup
+3. macOS notification on detection
+4. Frontend banner in `index.html`
+5. Config integration
+6. End-of-call detection
+7. Tests — mock process list, verify cooldown logic
+
+### Privacy Hardening — Spotlight Indexing Block
+
+**Problem**: macOS Spotlight indexes `~/meetings/` by default, making transcripts searchable system-wide and potentially visible to other apps.
+
+**Fix**: Drop a `.metadata_never_index` file in output directories on first run.
+
+```rust
+// In minutes-core config init or first recording
+fn block_spotlight_indexing(dir: &Path) {
+    let marker = dir.join(".metadata_never_index");
+    if !marker.exists() {
+        std::fs::write(&marker, "").ok();
+    }
+}
+```
+
+Directories to protect:
+- `~/meetings/`
+- `~/meetings/memos/`
+- `~/.minutes/` (logs, assistant workspace, screens)
+
+This is a one-liner to implement — should ship immediately.
+
+---
+
 ## PARA Integration (for QMD/Obsidian users)
 
 Meetings and memos become first-class PARA entities:
@@ -1028,17 +1202,17 @@ settle_delay_ms = 2000       # Wait for file size to stabilize before processing
 ```
 DURING RECORDING:
 
-  User types/says:  "Alex wants monthly billing not annual billing"
+  User types/says:  "Alex prefers monthly billing not annual"
        │
-       ├── CLI:      minutes note "Alex wants monthly billing not annual billing"
-       ├── Claude:   "note that Alex wants monthly billing"  →  add_note MCP tool
+       ├── CLI:      minutes note "Alex prefers monthly billing not annual"
+       ├── Claude:   "note that Alex wants monthly"  →  add_note MCP tool
        ├── Tauri:    types in note field  →  calls minutes note
        └── Dispatch: "add a note about pricing"  →  add_note MCP tool
        │
        ▼
   ~/.minutes/current-notes.md:
-       [4:23] Alex wants monthly billing not annual billing
-       [12:10] Case agreed with Alex
+       [4:23] Alex prefers monthly billing not annual
+       [12:10] Jordan agreed with Alex
 
 ON STOP:
 
@@ -1051,8 +1225,8 @@ ON STOP:
   LLM prompt includes:
     "The user marked these moments as important during the meeting.
      Weight them heavily in the summary:
-     [4:23] Alex wants monthly billing not annual billing
-     [12:10] Case agreed with Alex"
+     [4:23] Alex prefers monthly billing not annual
+     [12:10] Jordan agreed with Alex"
        │
        ▼
   Better summary. Notes appear in ## Notes section of output.
@@ -1061,8 +1235,8 @@ ON STOP:
 #### Pre-meeting context
 
 ```bash
-minutes record --title "1:1 with Case" \
-  --context "Discuss Q2 pricing. Follow up on annual billing decision. Case was hesitant last time."
+minutes record --title "1:1 with Alex" \
+  --context "Discuss Q2 roadmap. Follow up on API launch timeline. Alex was hesitant last time."
 ```
 
 The `--context` flag stores text in `~/.minutes/current-context.txt`. The pipeline passes it to the LLM: "Before the meeting, the user noted this context: [text]". This produces summaries that understand *why* the meeting happened.
@@ -1072,7 +1246,7 @@ For voice memos: `minutes process idea.m4a --note "Had this idea while driving �
 #### Post-meeting annotation
 
 ```bash
-minutes note --meeting ~/meetings/2026-03-17-pricing-call.md "Follow-up: Alex agreed via email on Mar 18"
+minutes note --meeting ~/meetings/2026-03-17-planning-call.md "Follow-up: Alex confirmed via email on Mar 18"
 ```
 
 Appends to the existing file's `## Notes` section. Timestamped with the annotation time, not the recording time.
@@ -1102,33 +1276,33 @@ Users type plain text. Never markdown. The system adds the timestamp prefix and 
 
 ```
 ---
-title: Pricing Discussion with Alex
+title: Q2 Roadmap Planning with Alex
 type: meeting
 date: 2026-03-17T14:00:00
 duration: 42m
-context: "Discuss Q2 pricing, follow up on annual billing minimum decision"
+context: "Discuss Q2 roadmap, follow up on API launch timeline"
 ---
 
 ## Summary
-- Alex proposed lowering API launch timeline from annual billing to monthly billing/mo
-- Case supported the lower price point
-- Compromise: run a pricing experiment with 10 advisors at monthly billing
+- Alex proposed moving the API launch from April to May
+- Jordan supported the later date for better testing
+- Compromise: soft launch in April, GA in May
 
 ## Notes
-- [4:23] Alex wants monthly billing not annual billing
-- [12:10] Case agreed with Alex
-- [28:00] Compromise: experiment at monthly billing
-- [Mar 18, post-meeting] Alex confirmed via email she's on board
+- [4:23] Alex prefers monthly billing not annual
+- [12:10] Jordan agreed with Alex
+- [28:00] Compromise: soft launch April, GA May
+- [Mar 18, post-meeting] Alex confirmed via email the timeline works
 
 ## Decisions
-- [x] Run pricing experiment at monthly billing with 10 advisors
+- [x] Soft launch API in April, GA in May
 
 ## Action Items
-- [ ] @user: Set up monthly billing pricing tier by Friday
-- [ ] @sarah: Identify 10 advisors for the experiment
+- [ ] @alex: Draft the migration guide by Friday
+- [ ] @jordan: Set up staging environment for soft launch
 
 ## Transcript
-[0:00] So let's talk about the pricing for advisors...
+[0:00] So let's talk about the timeline for the API launch...
 ```
 
 ### Phase 3: Tauri Desktop App (Week 3-4) — "Native menu bar experience"
@@ -1232,11 +1406,11 @@ context: "Discuss Q2 pricing, follow up on annual billing minimum decision"
 ```
 
 **Key Cowork insight:** MCPB tools are automatically available in Cowork. This means if Phase 2 (MCPB) is done well, Phase 4b is mostly about **crafting the right Cowork workflows** — the tool infrastructure is already there. The work is:
-1. Testing that MCPB tools work reliably through Dispatch (which has ~50% success rate currently)
+1. Testing that MCPB tools work reliably through Dispatch (still in preview, reliability may vary)
 2. Building smart compound workflows ("prepare me for Alex" = search_meetings + get_person_context + calendar lookup)
 3. Ensuring meeting context persists across Cowork sessions (may need a session-start injection pattern)
 
-**Exit criteria for Phase 4**: From phone: "Prepare me for my 2pm with Alex" → Claude surfaces past meeting history, open action items, her key concerns, and suggested talking points — all from local meeting data, no cloud required.
+**Exit criteria for Phase 4**: From phone: "Prepare me for my 2pm with Alex" → Claude surfaces past meeting history, open action items, their key concerns, and suggested talking points — all from local meeting data, no cloud required.
 
 ---
 
@@ -1254,10 +1428,10 @@ Claude (on Mac, via Cowork):
   → Calls list_meetings(attendee: "Acme")
   → Calls get_person_context(name: "Acme")
   → Calls calendar(event: "2pm today")
-  → Synthesizes: "You've met the Acme team 4 times. Last meeting (March 3):
-    they discussed integration timeline and asked about trusts.
-    Open action items: you committed to sending a comparison doc.
-    Their priorities: education funding, tax efficiency."
+  → Synthesizes: "You've met with Acme 4 times. Last meeting (March 3):
+    they discussed the integration timeline and asked about API access.
+    Open action items: you committed to sending a technical spec.
+    Their priorities: faster onboarding, data portability."
 
 User receives prep brief on phone before arriving.
 ```
@@ -1336,11 +1510,11 @@ User (in Cowork):
 Claude:
   → Calls get_person_context(name: "Alex")
   → "You've had 23 meetings with Alex over 4 months.
-    Topics she cares most about: API design (8 mentions),
+    Topics they care most about: API design (8 mentions),
     performance (6), documentation (5).
-    Her style: detail-oriented, often raises edge cases.
-    Last interaction: March 17, she committed to the pagination spec.
-    Open commitments from her: review competitor API docs (due March 21)."
+    Their style: detail-oriented, often raises edge cases.
+    Last interaction: March 17, they committed to the migration guide.
+    Open commitments: review competitor API docs (due March 21)."
 ```
 
 ---
@@ -1476,7 +1650,7 @@ Issues identified and mitigations:
 - [ ] **MCPB format**: Verify current MCPB packaging spec — the format may have evolved since initial research
 - [ ] **pyannote subprocess protocol**: Design the IPC between Rust CLI and Python pyannote subprocess (JSON over stdout? Temp file handoff?)
 - [ ] **BlackHole setup UX**: How to make the Multi-Output Device setup painless? Auto-detect? `minutes setup` command? Include a diagram?
-- [ ] **Domain registration**: Register `getminutes.dev` before someone else does
+- [x] ~~**Domain registration**: Register `getminutes.dev` before someone else does~~ **RESOLVED** — registered useminutes.dev + useminutes.app on Vercel
 - [x] ~~**IPC protocol (record/stop/status)**: PID file + signals. See IPC Protocol section in Phase 1a.~~ **RESOLVED**
 - [x] ~~**Watch dedup strategy**: Move to `processed/` on success, `failed/` on error. Lock file prevents concurrent watchers.~~ **RESOLVED**
 - [x] ~~**iCloud sync race condition**: Settle delay (2s size-stability check) before processing watched files.~~ **RESOLVED**
@@ -1609,28 +1783,7 @@ const tools = {
 
 ## Growth & Distribution Strategy
 
-### Phase 1: Developer traction (GitHub stars)
-- Launch on GitHub with polished README, demo GIF, clear install
-- Post to Hacker News, r/selfhosted, r/productivity
-- "Open-source Granola alternative with speaker diarization + voice memo processing" for the selfhosted crowd
-- "Your AI remembers every conversation you've had" for the broader pitch
-- Voice memo angle appeals to a wider audience than meeting-only tools (r/PKM, r/ObsidianMD, r/ADHD)
-- Agent-native angle for the Claude/AI crowd: "Agents have run logs. Humans have conversations. This bridges the gap."
-
-### Phase 2: Claude ecosystem native
-- List on Claude Desktop extension directory (when available)
-- Claude Code plugin in plugin registry
-- Blog post: "Building a meeting memory layer for Claude"
-
-### Phase 3: Broader audience
-- Homebrew cask: `brew install --cask minutes`
-- Product Hunt launch
-- YouTube demo: "Private, local meeting memory that works with your AI assistant"
-
-### Phase 4: Ecosystem play
-- QMD integration showcased in QMD docs
-- Obsidian community plugin (wrapper around the CLI)
-- Integration guides for other AI assistants (Cursor, Windsurf, etc.)
+See `.claude/growth-strategy.md` (gitignored — private strategy doc).
 
 ---
 
@@ -1645,4 +1798,4 @@ const tools = {
 - [Tauri v2](https://v2.tauri.app/) — Rust + web frontend desktop apps
 - [Claude Desktop MCPB](https://support.claude.com/en/articles/12922929) — Extension packaging format
 - [Claude Cowork Dispatch](https://support.claude.com/en/articles/13947068) — Remote agent control from phone
-- [MacStories Dispatch Review](https://www.macstories.net/stories/hands-on-with-claude-dispatch-for-cowork/) — Real-world testing (Dispatch preview)
+- [MacStories Dispatch Review](https://www.macstories.net/stories/hands-on-with-claude-dispatch-for-cowork/) — Real-world testing of Dispatch preview
