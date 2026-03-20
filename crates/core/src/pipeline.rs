@@ -182,10 +182,11 @@ where
     };
 
     // Clean up screen captures (runs regardless of summarization setting — fixes race)
-    if !screen_files.is_empty() && !config.screen_context.keep_after_summary {
-        if std::fs::remove_dir_all(&screen_dir).is_ok() {
-            tracing::info!(dir = %screen_dir.display(), "screen captures cleaned up");
-        }
+    if !screen_files.is_empty()
+        && !config.screen_context.keep_after_summary
+        && std::fs::remove_dir_all(&screen_dir).is_ok()
+    {
+        tracing::info!(dir = %screen_dir.display(), "screen captures cleaned up");
     }
 
     // Step 4: Write markdown (always)
@@ -228,6 +229,8 @@ where
         action_items: structured_actions,
         decisions: structured_decisions,
         intents: structured_intents,
+        recorded_by: config.identity.name.clone(),
+        visibility: None,
     };
 
     tracing::info!(step = "write", "writing markdown");
@@ -255,6 +258,12 @@ where
         write_ms,
         serde_json::json!({"output": result.path.display().to_string(), "words": result.word_count}),
     );
+
+    // Emit event for agents/watchers
+    crate::events::append_event(crate::events::audio_processed_event(
+        &result,
+        &audio_path.display().to_string(),
+    ));
 
     let elapsed = start.elapsed();
     logging::log_step(

@@ -4,6 +4,7 @@ pub mod config;
 pub mod daily_notes;
 pub mod diarize;
 pub mod error;
+pub mod events;
 pub mod logging;
 pub mod markdown;
 pub mod notes;

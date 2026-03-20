@@ -109,6 +109,33 @@ pub struct SearchFilters {
     pub attendee: Option<String>,
     pub intent_kind: Option<IntentKind>,
     pub owner: Option<String>,
+    pub recorded_by: Option<String>,
+}
+
+/// Resolve a meeting file by slug prefix (date-title pattern).
+/// Returns the first match found in the output directory.
+pub fn resolve_slug(slug: &str, config: &Config) -> Option<PathBuf> {
+    if slug.is_empty() {
+        return None;
+    }
+
+    let dir = &config.output_dir;
+    if !dir.exists() {
+        return None;
+    }
+
+    for entry in WalkDir::new(dir)
+        .into_iter()
+        .filter_map(|e| e.ok())
+        .filter(|e| e.path().extension().is_some_and(|ext| ext == "md"))
+    {
+        let filename = entry.path().file_stem().unwrap_or_default().to_string_lossy();
+        if filename.to_lowercase().contains(&slug.to_lowercase()) {
+            return Some(entry.path().to_path_buf());
+        }
+    }
+
+    None
 }
 
 pub fn cross_meeting_research(
@@ -1003,6 +1030,7 @@ mod tests {
             attendee: None,
             intent_kind: None,
             owner: None,
+            recorded_by: None,
         };
 
         let results = search("pricing", &config, &filters).unwrap();
@@ -1029,6 +1057,7 @@ mod tests {
             attendee: None,
             intent_kind: None,
             owner: None,
+            recorded_by: None,
         };
 
         let results = search("nonexistent", &config, &filters).unwrap();
@@ -1054,6 +1083,7 @@ mod tests {
             attendee: None,
             intent_kind: None,
             owner: None,
+            recorded_by: None,
         };
 
         let results = search("pricing", &config, &filters).unwrap();
@@ -1073,6 +1103,7 @@ mod tests {
             attendee: None,
             intent_kind: None,
             owner: None,
+            recorded_by: None,
         };
 
         let results = search("anything", &config, &filters).unwrap();
@@ -1114,6 +1145,7 @@ mod tests {
             attendee: None,
             intent_kind: None,
             owner: None,
+            recorded_by: None,
         };
 
         let results =
@@ -1144,6 +1176,7 @@ mod tests {
             attendee: None,
             intent_kind: Some(IntentKind::Commitment),
             owner: Some("sarah".into()),
+            recorded_by: None,
         };
 
         let results =
@@ -1310,6 +1343,7 @@ mod tests {
             attendee: None,
             intent_kind: None,
             owner: None,
+            recorded_by: None,
         };
         let report = cross_meeting_research("pricing", &config, &filters).unwrap();
 

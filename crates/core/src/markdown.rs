@@ -1,6 +1,7 @@
 use crate::config::Config;
 use crate::error::MarkdownError;
 use chrono::{DateTime, Local};
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
@@ -13,7 +14,7 @@ use std::path::{Path, PathBuf};
 // ──────────────────────────────────────────────────────────────
 
 /// Content types for output files.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum ContentType {
     Meeting,
@@ -21,7 +22,7 @@ pub enum ContentType {
 }
 
 /// Output status markers.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "kebab-case")]
 pub enum OutputStatus {
     Complete,
@@ -30,7 +31,7 @@ pub enum OutputStatus {
 }
 
 /// Frontmatter for a meeting/memo markdown file.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct Frontmatter {
     pub title: String,
     pub r#type: ContentType,
@@ -58,9 +59,13 @@ pub struct Frontmatter {
     pub decisions: Vec<Decision>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub intents: Vec<Intent>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub recorded_by: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub visibility: Option<Visibility>,
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
 pub struct EntityLinks {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub people: Vec<EntityRef>,
@@ -74,7 +79,7 @@ impl EntityLinks {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct EntityRef {
     pub slug: String,
     pub label: String,
@@ -84,7 +89,7 @@ pub struct EntityRef {
 
 /// A structured action item extracted from a meeting.
 /// Queryable via MCP tools: filter by assignee, status, due date.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct ActionItem {
     pub assignee: String,
     pub task: String,
@@ -95,14 +100,14 @@ pub struct ActionItem {
 
 /// A structured decision extracted from a meeting.
 /// Queryable via MCP tools: search across all meetings for decision history.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct Decision {
     pub text: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub topic: Option<String>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "kebab-case")]
 pub enum IntentKind {
     ActionItem,
@@ -111,7 +116,7 @@ pub enum IntentKind {
     Commitment,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct Intent {
     pub kind: IntentKind,
     pub what: String,
@@ -120,6 +125,13 @@ pub struct Intent {
     pub status: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub by_date: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum Visibility {
+    Private,
+    Team,
 }
 
 /// Result of writing a meeting/memo to disk.
@@ -149,7 +161,7 @@ pub fn write(
         .map_err(|e| MarkdownError::OutputDirError(format!("{}: {}", output_dir.display(), e)))?;
 
     // Generate filename slug
-    let slug = generate_slug(&frontmatter.title, frontmatter.date);
+    let slug = generate_slug(&frontmatter.title, frontmatter.date, frontmatter.recorded_by.as_deref());
     let path = resolve_collision(&output_dir, &slug);
 
     // Build markdown content
@@ -187,9 +199,13 @@ pub fn write(
     content.push_str(transcript);
     content.push('\n');
 
-    // Write file with 0600 permissions
+    // Write file with appropriate permissions
     fs::write(&path, &content)?;
-    set_permissions_0600(&path)?;
+    let mode = match frontmatter.visibility {
+        Some(Visibility::Team) => 0o640,
+        _ => 0o600,
+    };
+    set_permissions(&path, mode)?;
 
     let word_count = transcript.split_whitespace().count();
     tracing::info!(
@@ -207,8 +223,8 @@ pub fn write(
     })
 }
 
-/// Generate a URL-safe filename slug from title and date.
-fn generate_slug(title: &str, date: DateTime<Local>) -> String {
+/// Generate a URL-safe filename slug from title, date, and optional recorder name.
+fn generate_slug(title: &str, date: DateTime<Local>, recorded_by: Option<&str>) -> String {
     let date_prefix = date.format("%Y-%m-%d").to_string();
     let title_slug: String = title
         .to_lowercase()
@@ -220,12 +236,31 @@ fn generate_slug(title: &str, date: DateTime<Local>) -> String {
         .collect::<Vec<_>>()
         .join("-");
 
+    let name_suffix = recorded_by
+        .map(|name| {
+            let short: String = name
+                .split_whitespace()
+                .next()
+                .unwrap_or(name)
+                .to_lowercase()
+                .chars()
+                .filter(|c| c.is_alphanumeric())
+                .take(10)
+                .collect();
+            if short.is_empty() {
+                String::new()
+            } else {
+                format!("-{}", short)
+            }
+        })
+        .unwrap_or_default();
+
     let slug = if title_slug.is_empty() {
-        format!("{}-untitled", date_prefix)
+        format!("{}-untitled{}", date_prefix, name_suffix)
     } else {
         // Truncate long titles
         let truncated: String = title_slug.chars().take(60).collect();
-        format!("{}-{}", date_prefix, truncated)
+        format!("{}-{}{}", date_prefix, truncated, name_suffix)
     };
 
     format!("{}.md", slug)
@@ -251,9 +286,9 @@ fn resolve_collision(dir: &Path, filename: &str) -> PathBuf {
     dir.join(format!("{}-{}.md", stem, ts))
 }
 
-/// Set file permissions to 0600 (owner read/write only).
-fn set_permissions_0600(path: &Path) -> Result<(), MarkdownError> {
-    let perms = fs::Permissions::from_mode(0o600);
+/// Set file permissions to the given mode.
+fn set_permissions(path: &Path, mode: u32) -> Result<(), MarkdownError> {
+    let perms = fs::Permissions::from_mode(mode);
     fs::set_permissions(path, perms)?;
     Ok(())
 }
@@ -321,13 +356,15 @@ mod tests {
             action_items: vec![],
             decisions: vec![],
             intents: vec![],
+            recorded_by: None,
+            visibility: None,
         }
     }
 
     #[test]
     fn generates_correct_slug() {
         let date = Local::now();
-        let slug = generate_slug("Q2 Planning Discussion", date);
+        let slug = generate_slug("Q2 Planning Discussion", date, None);
         let prefix = date.format("%Y-%m-%d").to_string();
         assert!(slug.starts_with(&prefix));
         assert!(slug.contains("q2-planning-discussion"));
@@ -337,8 +374,57 @@ mod tests {
     #[test]
     fn generates_untitled_slug_for_empty_title() {
         let date = Local::now();
-        let slug = generate_slug("", date);
+        let slug = generate_slug("", date, None);
         assert!(slug.contains("untitled"));
+    }
+
+    #[test]
+    fn generates_slug_with_recorder_name() {
+        let date = Local::now();
+        let slug = generate_slug("Q2 Planning", date, Some("Mat Silverstein"));
+        assert!(slug.contains("-mat"));
+        assert!(slug.ends_with(".md"));
+    }
+
+    #[test]
+    fn visibility_team_sets_0640_permissions() {
+        let dir = TempDir::new().unwrap();
+        let config = Config {
+            output_dir: dir.path().to_path_buf(),
+            ..Config::default()
+        };
+
+        let mut fm = test_frontmatter();
+        fm.visibility = Some(Visibility::Team);
+        let result = write(&fm, "Hello world", None, None, &config).unwrap();
+
+        let metadata = fs::metadata(&result.path).unwrap();
+        let mode = metadata.permissions().mode() & 0o777;
+        assert_eq!(mode, 0o640, "team visibility should set 0640 permissions");
+    }
+
+    #[test]
+    fn frontmatter_with_recorded_by_roundtrips() {
+        let dir = TempDir::new().unwrap();
+        let config = Config {
+            output_dir: dir.path().to_path_buf(),
+            ..Config::default()
+        };
+
+        let mut fm = test_frontmatter();
+        fm.recorded_by = Some("Mat".into());
+        let result = write(&fm, "Transcript", None, None, &config).unwrap();
+        let content = fs::read_to_string(&result.path).unwrap();
+        assert!(content.contains("recorded_by: Mat"));
+    }
+
+    #[test]
+    fn json_schema_generates_valid_schema() {
+        let schema = schemars::schema_for!(Frontmatter);
+        let json = serde_json::to_string_pretty(&schema).unwrap();
+        assert!(json.contains("Frontmatter"));
+        assert!(json.contains("recorded_by"));
+        assert!(json.contains("visibility"));
     }
 
     #[test]

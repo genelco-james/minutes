@@ -1,4 +1,5 @@
 use anyhow::Result;
+use chrono::TimeZone;
 use clap::{Parser, Subcommand};
 use minutes_core::{CaptureMode, Config, ContentType};
 use serde::Serialize;
@@ -200,6 +201,26 @@ enum Commands {
         lines: usize,
     },
 
+    /// Output the JSON Schema for the meeting frontmatter format
+    Schema,
+
+    /// Get a meeting by filename slug
+    Get {
+        /// Filename slug to match (e.g., "2026-03-17-advisor-call")
+        slug: String,
+    },
+
+    /// Show recent events from the event log
+    Events {
+        /// Maximum number of events
+        #[arg(short, long, default_value = "50")]
+        limit: usize,
+
+        /// Only events since this date (ISO format)
+        #[arg(long)]
+        since: Option<String>,
+    },
+
     /// Import meetings from another app (e.g., Granola)
     Import {
         /// Source app: granola
@@ -296,6 +317,9 @@ fn main() -> Result<()> {
         Commands::Qmd { action, collection } => cmd_qmd(&action, &collection, &config),
         Commands::Service { action } => cmd_service(&action),
         Commands::Logs { errors, lines } => cmd_logs(errors, lines),
+        Commands::Schema => cmd_schema(),
+        Commands::Get { slug } => cmd_get(&slug, &config),
+        Commands::Events { limit, since } => cmd_events(limit, since, &config),
         Commands::Import { from, dir, dry_run } => cmd_import(&from, dir.as_deref(), dry_run, &config),
     }
 }
@@ -424,6 +448,11 @@ fn cmd_record(
 
     let result = result?;
 
+    // Emit RecordingCompleted event (AudioProcessed already emitted by pipeline)
+    minutes_core::events::append_event(
+        minutes_core::events::recording_completed_event(&result, "live"),
+    );
+
     // Write result file for `minutes stop` to read
     let result_json = serde_json::to_string_pretty(&serde_json::json!({
         "status": "done",
@@ -507,6 +536,7 @@ fn cmd_status() -> Result<()> {
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn cmd_search(
     query: &str,
     content_type: Option<String>,
@@ -523,6 +553,7 @@ fn cmd_search(
         attendee: None,
         intent_kind: intent_kind.as_deref().map(parse_intent_kind).transpose()?,
         owner,
+        recorded_by: None,
     };
 
     if intents_only {
@@ -714,6 +745,7 @@ fn cmd_research(
         attendee,
         intent_kind: None,
         owner: None,
+        recorded_by: None,
     };
 
     let report = minutes_core::search::cross_meeting_research(query, config, &filters)
@@ -1326,6 +1358,40 @@ life (qmd://life/)
 }
 
 // Frontmatter parsing is in minutes_core::markdown::{split_frontmatter, extract_field}
+
+fn cmd_schema() -> Result<()> {
+    let schema = schemars::schema_for!(minutes_core::markdown::Frontmatter);
+    let json = serde_json::to_string_pretty(&schema)?;
+    println!("{}", json);
+    Ok(())
+}
+
+fn cmd_get(slug: &str, config: &Config) -> Result<()> {
+    match minutes_core::search::resolve_slug(slug, config) {
+        Some(path) => {
+            let content = std::fs::read_to_string(&path)?;
+            println!("{}", content);
+            Ok(())
+        }
+        None => {
+            anyhow::bail!("no meeting found matching slug: {}", slug);
+        }
+    }
+}
+
+fn cmd_events(limit: usize, since: Option<String>, _config: &Config) -> Result<()> {
+    let since_dt = since.as_deref().and_then(|s| {
+        chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d")
+            .ok()
+            .and_then(|d| d.and_hms_opt(0, 0, 0))
+            .and_then(|ndt| chrono::Local.from_local_datetime(&ndt).single())
+    });
+
+    let events = minutes_core::events::read_events(since_dt, Some(limit));
+    let json = serde_json::to_string_pretty(&events)?;
+    println!("{}", json);
+    Ok(())
+}
 
 // ── Import ──────────────────────────────────────────────────
 

@@ -16,7 +16,7 @@
  * No shell interpolation — safe from injection.
  */
 
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { McpServer, ResourceTemplate } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 import { execFile, spawn } from "child_process";
@@ -764,6 +764,64 @@ server.tool(
         },
       ],
     };
+  }
+);
+
+// ── Resources ───────────────────────────────────────────────
+
+server.resource(
+  "recent_meetings",
+  "minutes://meetings/recent",
+  { description: "List of recent meetings and memos" },
+  async () => {
+    const { stdout } = await runMinutes(["list", "--limit", "20"]);
+    return { contents: [{ uri: "minutes://meetings/recent", mimeType: "application/json", text: stdout }] };
+  }
+);
+
+server.resource(
+  "recording_status",
+  "minutes://status",
+  { description: "Current recording status" },
+  async () => {
+    const { stdout } = await runMinutes(["status"]);
+    return { contents: [{ uri: "minutes://status", mimeType: "application/json", text: stdout }] };
+  }
+);
+
+server.resource(
+  "open_actions",
+  "minutes://actions/open",
+  { description: "All open action items across meetings" },
+  async () => {
+    const { stdout } = await runMinutes(["search", "", "--intents-only", "--intent-kind", "action-item"]);
+    return { contents: [{ uri: "minutes://actions/open", mimeType: "application/json", text: stdout }] };
+  }
+);
+
+server.resource(
+  "recent_events",
+  "minutes://events/recent",
+  { description: "Recent pipeline events (recordings, processing, notes)" },
+  async () => {
+    const { stdout } = await runMinutes(["events", "--limit", "20"]);
+    return { contents: [{ uri: "minutes://events/recent", mimeType: "application/json", text: stdout }] };
+  }
+);
+
+server.resource(
+  "meeting",
+  new ResourceTemplate("minutes://meetings/{slug}", { list: undefined }),
+  { description: "Get a specific meeting by its filename slug" },
+  async (uri, variables) => {
+    const slug = String(variables.slug);
+    const { stdout } = await runMinutes(["resolve", slug]);
+    const parsed = parseJsonOutput(stdout);
+    if (parsed.path) {
+      const content = await readFile(parsed.path, "utf-8");
+      return { contents: [{ uri: uri.href, mimeType: "text/markdown", text: content }] };
+    }
+    return { contents: [{ uri: uri.href, mimeType: "text/plain", text: `Meeting not found: ${slug}` }] };
   }
 );
 

@@ -163,6 +163,7 @@ fn search_filters_by_content_type() {
         attendee: None,
         intent_kind: None,
         owner: None,
+        recorded_by: None,
     };
 
     // Search for content that exists in the output (varies by whisper vs placeholder)

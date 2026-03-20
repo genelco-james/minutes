@@ -22,6 +22,7 @@ pub struct Config {
     pub assistant: AssistantConfig,
     pub screen_context: ScreenContextConfig,
     pub call_detection: CallDetectionConfig,
+    pub identity: IdentityConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -103,6 +104,13 @@ pub struct CallDetectionConfig {
     pub apps: Vec<String>,
 }
 
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct IdentityConfig {
+    pub name: Option<String>,
+    pub email: Option<String>,
+}
+
 impl Default for ScreenContextConfig {
     fn default() -> Self {
         Self {
@@ -163,6 +171,7 @@ impl Default for Config {
             assistant: AssistantConfig::default(),
             screen_context: ScreenContextConfig::default(),
             call_detection: CallDetectionConfig::default(),
+            identity: IdentityConfig::default(),
         }
     }
 }

@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/core", "crates/cli", "tauri/src-tauri"]
+members = ["crates/core", "crates/cli", "crates/reader", "tauri/src-tauri"]
 resolver = "2"
 
 [workspace.package]
@@ -53,6 +53,9 @@ ureq = { version = "3", features = ["json"] }
 
 # File locking (atomic PID file operations)
 fs2 = "0.4"
+
+# JSON Schema generation
+schemars = { version = "1", features = ["derive", "chrono04"] }
 
 # Audio format conversion
 symphonia = { version = "0.5", features = ["mp3", "aac", "ogg", "wav", "isomp4"] }

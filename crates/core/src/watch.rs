@@ -177,6 +177,12 @@ fn process_file(path: &Path, config: &Config) -> Result<(), WatchError> {
                 words = result.word_count,
                 "file processed successfully"
             );
+            crate::events::append_event(crate::events::MinutesEvent::WatchProcessed {
+                path: result.path.display().to_string(),
+                title: result.title.clone(),
+                word_count: result.word_count,
+                source_path: path.display().to_string(),
+            });
             move_to(path, "processed")?;
             Ok(())
         }

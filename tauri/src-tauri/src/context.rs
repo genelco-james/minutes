@@ -165,6 +165,7 @@ pub fn generate_assistant_context(config: &Config) -> Result<String, String> {
         attendee: None,
         intent_kind: None,
         owner: None,
+        recorded_by: None,
     };
 
     if let Ok(results) = search::search("", config, &filters) {
@@ -191,6 +192,7 @@ pub fn generate_assistant_context(config: &Config) -> Result<String, String> {
         attendee: None,
         intent_kind: None,
         owner: None,
+        recorded_by: None,
     };
     if let Ok(intents) = search::search_intents("", config, &intent_filters) {
         let open: Vec<_> = intents

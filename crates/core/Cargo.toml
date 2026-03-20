@@ -27,6 +27,7 @@ whisper-rs = { workspace = true, optional = true }
 symphonia = { workspace = true }
 ureq = { workspace = true }
 fs2 = { workspace = true }
+schemars = { workspace = true }
 base64 = "0.22"
 libc = "0.2"
 

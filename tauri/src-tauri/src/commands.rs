@@ -402,6 +402,7 @@ fn latest_saved_artifact_path(
         attendee: None,
         intent_kind: None,
         owner: None,
+        recorded_by: None,
     };
     let latest = minutes_core::search::search("", &config, &filters)
         .map_err(|e| e.to_string())?
@@ -1261,6 +1262,7 @@ pub fn cmd_list_meetings(limit: Option<usize>) -> serde_json::Value {
         attendee: None,
         intent_kind: None,
         owner: None,
+        recorded_by: None,
     };
     match minutes_core::search::search("", &config, &filters) {
         Ok(results) => {
@@ -1325,6 +1327,7 @@ pub fn cmd_search(query: String) -> serde_json::Value {
         attendee: None,
         intent_kind: None,
         owner: None,
+        recorded_by: None,
     };
     match minutes_core::search::search(&query, &config, &filters) {
         Ok(results) => serde_json::to_value(&results).unwrap_or(serde_json::json!([])),
