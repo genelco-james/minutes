@@ -80,10 +80,7 @@ fn append_event_inner(envelope: &EventEnvelope) -> std::io::Result<()> {
     }
 
     let creating = !path.exists();
-    let mut file = OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&path)?;
+    let mut file = OpenOptions::new().create(true).append(true).open(&path)?;
 
     // Set 0600 on newly created files (sensitive meeting data)
     #[cfg(unix)]
@@ -91,17 +88,13 @@ fn append_event_inner(envelope: &EventEnvelope) -> std::io::Result<()> {
         fs::set_permissions(&path, fs::Permissions::from_mode(0o600))?;
     }
 
-    let line = serde_json::to_string(envelope)
-        .map_err(|e| std::io::Error::other(e.to_string()))?;
+    let line = serde_json::to_string(envelope).map_err(|e| std::io::Error::other(e.to_string()))?;
     writeln!(file, "{}", line)?;
     Ok(())
 }
 
 /// Read events from the log, optionally filtered by time and limited.
-pub fn read_events(
-    since: Option<DateTime<Local>>,
-    limit: Option<usize>,
-) -> Vec<EventEnvelope> {
+pub fn read_events(since: Option<DateTime<Local>>, limit: Option<usize>) -> Vec<EventEnvelope> {
     match read_events_inner(since, limit) {
         Ok(events) => events,
         Err(e) => {

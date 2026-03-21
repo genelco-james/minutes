@@ -114,6 +114,33 @@ pub enum MarkdownError {
 }
 
 #[derive(Debug, Error)]
+pub enum VaultError {
+    #[error("vault not configured — run: minutes vault setup")]
+    NotConfigured,
+
+    #[error("vault path not found: {0}")]
+    VaultPathNotFound(String),
+
+    #[error("permission denied: {0} — macOS requires Full Disk Access for ~/Documents/")]
+    PermissionDenied(String),
+
+    #[error("cannot create symlink — directory already exists: {0}")]
+    ExistingDirectory(String),
+
+    #[error("symlink creation failed: {0}")]
+    SymlinkFailed(String),
+
+    #[error("vault copy failed for {0}: {1}")]
+    CopyFailed(String, std::io::Error),
+
+    #[error("broken symlink at {0} (target: {1})")]
+    BrokenSymlink(String, String),
+
+    #[error("I/O error: {0}")]
+    Io(#[from] std::io::Error),
+}
+
+#[derive(Debug, Error)]
 pub enum PidError {
     #[error("already recording (PID: {0})")]
     AlreadyRecording(u32),
@@ -149,6 +176,9 @@ pub enum MinutesError {
 
     #[error(transparent)]
     Markdown(#[from] MarkdownError),
+
+    #[error(transparent)]
+    Vault(#[from] VaultError),
 
     #[error(transparent)]
     Pid(#[from] PidError),

@@ -274,8 +274,8 @@ pub fn is_process_alive(pid: u32) -> bool {
     }
     #[cfg(windows)]
     {
-        use windows_sys::Win32::System::Threading::{OpenProcess, PROCESS_SYNCHRONIZE};
         use windows_sys::Win32::Foundation::CloseHandle;
+        use windows_sys::Win32::System::Threading::{OpenProcess, PROCESS_SYNCHRONIZE};
         unsafe {
             let handle = OpenProcess(PROCESS_SYNCHRONIZE, 0, pid);
             if handle.is_null() {
@@ -317,7 +317,9 @@ pub fn check_and_clear_sentinel() -> bool {
 
 /// Spawn a background thread that polls for the sentinel file and sets the stop flag.
 /// Returns a JoinHandle that can be used to wait for cleanup.
-pub fn spawn_sentinel_watcher(stop_flag: std::sync::Arc<std::sync::atomic::AtomicBool>) -> std::thread::JoinHandle<()> {
+pub fn spawn_sentinel_watcher(
+    stop_flag: std::sync::Arc<std::sync::atomic::AtomicBool>,
+) -> std::thread::JoinHandle<()> {
     std::thread::spawn(move || {
         loop {
             if stop_flag.load(std::sync::atomic::Ordering::Relaxed) {

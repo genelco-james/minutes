@@ -98,10 +98,7 @@ tell application "Calendar"
 end tell
 return output"#;
 
-    let output = Command::new("osascript")
-        .arg("-e")
-        .arg(script)
-        .output();
+    let output = Command::new("osascript").arg("-e").arg(script).output();
 
     let output = match output {
         Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).to_string(),
@@ -221,10 +218,7 @@ return output"#,
         minutes = lookahead_minutes
     );
 
-    let output = Command::new("osascript")
-        .arg("-e")
-        .arg(&script)
-        .output();
+    let output = Command::new("osascript").arg("-e").arg(&script).output();
 
     let output = match output {
         Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).to_string(),

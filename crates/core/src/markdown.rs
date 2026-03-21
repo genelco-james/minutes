@@ -162,7 +162,11 @@ pub fn write(
         .map_err(|e| MarkdownError::OutputDirError(format!("{}: {}", output_dir.display(), e)))?;
 
     // Generate filename slug
-    let slug = generate_slug(&frontmatter.title, frontmatter.date, frontmatter.recorded_by.as_deref());
+    let slug = generate_slug(
+        &frontmatter.title,
+        frontmatter.date,
+        frontmatter.recorded_by.as_deref(),
+    );
     let path = resolve_collision(&output_dir, &slug);
 
     // Build markdown content
