@@ -278,7 +278,7 @@ pub fn is_process_alive(pid: u32) -> bool {
         use windows_sys::Win32::Foundation::CloseHandle;
         unsafe {
             let handle = OpenProcess(PROCESS_SYNCHRONIZE, 0, pid);
-            if handle == 0 {
+            if handle.is_null() {
                 false
             } else {
                 CloseHandle(handle);
