@@ -472,6 +472,11 @@ Tagged GitHub releases can include both a Windows NSIS installer as `minutes-des
 
 The desktop app adds a system tray icon, recording controls, audio visualizer, Recall, and a meeting list window. The current Windows desktop build covers recording, transcription, search, settings, and Recall. Calendar suggestions, call detection, tray copy/paste automation, and the native dictation hotkey remain macOS-only for now.
 
+Release workflow details live in:
+
+- [docs/RELEASE-MACOS.md](/Users/silverbook/Sites/minutes/docs/RELEASE-MACOS.md)
+- [docs/RELEASE-WINDOWS.md](/Users/silverbook/Sites/minutes/docs/RELEASE-WINDOWS.md)
+
 For macOS development, use a dedicated signed dev app identity:
 
 - Production app: `/Applications/Minutes.app` (`com.useminutes.desktop`)

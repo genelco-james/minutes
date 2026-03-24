@@ -113,6 +113,8 @@ cargo tauri build --ci --bundles nsis --no-sign
 
 - The Windows-specific installer defaults live in
   [tauri.windows.conf.json](/Users/silverbook/Sites/minutes/tauri/src-tauri/tauri.windows.conf.json).
+- macOS app identity / TCC-sensitive development guidance lives in
+  [docs/DESKTOP-DEVELOPMENT.md](/Users/silverbook/Sites/minutes/docs/DESKTOP-DEVELOPMENT.md).
 - The macOS-only bundle settings remain in
   [tauri.macos.conf.json](/Users/silverbook/Sites/minutes/tauri/src-tauri/tauri.macos.conf.json)
   so the shared config stays cross-platform.

@@ -111,6 +111,8 @@ first and then run the same commands.
 - The workflow currently builds the runner-native macOS bundle. If universal
   binaries become a requirement later, track that separately instead of
   complicating this first trusted pipeline.
+- Windows desktop release guidance lives in
+  [docs/RELEASE-WINDOWS.md](/Users/silverbook/Sites/minutes/docs/RELEASE-WINDOWS.md).
 - Channel and rollback rules live in
   [docs/RELEASE-CHANNELS.md](/Users/silverbook/Sites/minutes/docs/RELEASE-CHANNELS.md).
 - Reproducible release-note generation lives in
