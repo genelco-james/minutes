@@ -32,12 +32,21 @@ pub fn transcribe(audio_path: &Path, config: &Config) -> Result<String, Transcri
         return Err(TranscribeError::EmptyAudio);
     }
 
-    // Step 2: Strip silence via VAD to prevent decoder hallucination loops.
-    // whisper.cpp hallucinates repeating gibberish on long silence segments,
-    // especially with non-English audio (see issue #21). Replacing silence
-    // with short padding keeps segment boundaries intact while removing
-    // the input that triggers repetition.
-    let samples = strip_silence(&samples);
+    // Step 2: Silence handling.
+    // If Silero VAD model is available, whisper handles silence internally via
+    // integrated VAD (set in default_whisper_params). Otherwise, fall back to
+    // energy-based silence stripping to prevent hallucination loops (issue #21).
+    #[cfg(feature = "whisper")]
+    let use_integrated_vad = resolve_vad_model_path(config).is_some();
+    #[cfg(not(feature = "whisper"))]
+    let use_integrated_vad = false;
+
+    let samples = if use_integrated_vad {
+        tracing::debug!("Silero VAD available — skipping energy-based silence stripping");
+        samples
+    } else {
+        strip_silence(&samples)
+    };
 
     if samples.is_empty() {
         return Err(TranscribeError::EmptyAudio);
@@ -74,9 +83,6 @@ fn transcribe_with_whisper(
     _audio_path: &Path,
     config: &Config,
 ) -> Result<String, TranscribeError> {
-    // Suppress unused warnings when whisper feature is disabled
-    #[cfg(not(feature = "whisper"))]
-    let _ = config;
     // Load whisper model
     let model_path = resolve_model_path(config)?;
     tracing::info!(model = %model_path.display(), "loading whisper model");
@@ -99,7 +105,10 @@ fn transcribe_with_whisper(
         .create_state()
         .map_err(|e| TranscribeError::TranscriptionFailed(format!("create state: {}", e)))?;
 
-    let mut params = default_whisper_params();
+    // Resolve VAD model path and convert to string for FullParams lifetime
+    let vad_path = resolve_vad_model_path(config);
+    let vad_path_str = vad_path.as_ref().and_then(|p| p.to_str());
+    let mut params = default_whisper_params(vad_path_str);
     params.set_n_threads(num_cpus());
     params.set_language(config.transcription.language.as_deref());
     params.set_token_timestamps(true);
@@ -110,12 +119,26 @@ fn transcribe_with_whisper(
 
     let num_segments = state.full_n_segments();
 
-    let mut transcript = String::new();
+    // Collect segments, filtering by no_speech probability
+    let mut lines: Vec<String> = Vec::new();
+    let mut skipped_no_speech = 0u32;
     for i in 0..num_segments {
         let segment = match state.get_segment(i) {
             Some(seg) => seg,
             None => continue,
         };
+
+        // Layer 3: Skip segments with high no_speech probability (likely hallucination)
+        let no_speech_prob = segment.no_speech_probability();
+        if no_speech_prob > 0.8 {
+            skipped_no_speech += 1;
+            tracing::debug!(
+                segment = i,
+                no_speech_prob = format!("{:.2}", no_speech_prob),
+                "skipping segment — high no_speech probability"
+            );
+            continue;
+        }
 
         let start_ts = segment.start_timestamp();
         let text = segment
@@ -129,8 +152,25 @@ fn transcribe_with_whisper(
 
         let mins = start_ts / 6000;
         let secs = (start_ts % 6000) / 100;
-        transcript.push_str(&format!("[{}:{:02}] {}\n", mins, secs, text));
+        lines.push(format!("[{}:{:02}] {}", mins, secs, text));
     }
+
+    if skipped_no_speech > 0 {
+        tracing::info!(
+            skipped = skipped_no_speech,
+            "filtered segments with high no_speech probability"
+        );
+    }
+
+    // Layer 2: Remove repetition loops — detect consecutive near-identical segments
+    let lines = dedup_segments(lines);
+
+    let transcript = lines.join("\n");
+    let transcript = if transcript.is_empty() {
+        transcript
+    } else {
+        format!("{}\n", transcript)
+    };
 
     let word_count = transcript.split_whitespace().count();
     tracing::info!(
@@ -143,6 +183,11 @@ fn transcribe_with_whisper(
 }
 
 /// Load audio from any supported format as 16kHz mono f32 samples.
+///
+/// For non-WAV formats (m4a, mp3, ogg, etc.), prefers ffmpeg when available
+/// because symphonia's AAC decoder produces samples that cause whisper to
+/// hallucinate on non-English audio (issue #21). Falls back to symphonia
+/// when ffmpeg is not installed.
 fn load_audio_samples(path: &Path) -> Result<Vec<f32>, TranscribeError> {
     let ext = path
         .extension()
@@ -152,7 +197,22 @@ fn load_audio_samples(path: &Path) -> Result<Vec<f32>, TranscribeError> {
 
     match ext.as_str() {
         "wav" => load_wav(path),
-        "m4a" | "mp3" | "ogg" | "webm" | "mp4" | "aac" => decode_with_symphonia(path),
+        "m4a" | "mp3" | "ogg" | "webm" | "mp4" | "aac" => {
+            // Prefer ffmpeg — its resampler and AAC decoder produce samples that
+            // whisper transcribes correctly across all languages. Symphonia's AAC
+            // decoder produces subtly different samples that trigger hallucination
+            // loops on non-English audio (confirmed in issue #21).
+            match decode_with_ffmpeg(path) {
+                Ok(samples) => Ok(samples),
+                Err(e) => {
+                    tracing::debug!(
+                        error = %e,
+                        "ffmpeg decode failed — falling back to symphonia"
+                    );
+                    decode_with_symphonia(path)
+                }
+            }
+        }
         other => Err(TranscribeError::UnsupportedFormat(other.to_string())),
     }
 }
@@ -210,6 +270,65 @@ fn load_wav(path: &Path) -> Result<Vec<f32>, TranscribeError> {
     // Auto-normalize: if peak is below target, boost so whisper gets usable levels.
     // Quiet mics (e.g. MacBook Pro) can produce peaks of 0.004 which whisper can't detect.
     Ok(normalize_audio(resampled))
+}
+
+/// Decode audio with ffmpeg (preferred for non-WAV formats).
+///
+/// Shells out to `ffmpeg` to convert any audio to 16kHz mono f32le PCM.
+/// This matches exactly what whisper-cli does and produces samples that
+/// whisper transcribes correctly across all languages.
+///
+/// Returns an error if ffmpeg is not installed or the conversion fails,
+/// allowing the caller to fall back to symphonia.
+fn decode_with_ffmpeg(path: &Path) -> Result<Vec<f32>, TranscribeError> {
+    use std::process::Command;
+
+    let tmp_dir = std::env::temp_dir();
+    let tmp_wav = tmp_dir.join(format!("minutes-ffmpeg-{}.wav", std::process::id()));
+
+    let output = Command::new("ffmpeg")
+        .args([
+            "-i",
+            path.to_str().unwrap_or(""),
+            "-ar",
+            "16000", // 16kHz sample rate
+            "-ac",
+            "1", // mono
+            "-f",
+            "wav", // WAV output
+            "-y",  // overwrite
+        ])
+        .arg(&tmp_wav)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::piped())
+        .output()
+        .map_err(|e| {
+            TranscribeError::TranscriptionFailed(format!("ffmpeg not available: {}", e))
+        })?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        // Clean up temp file on failure
+        let _ = std::fs::remove_file(&tmp_wav);
+        return Err(TranscribeError::TranscriptionFailed(format!(
+            "ffmpeg conversion failed: {}",
+            stderr.lines().last().unwrap_or("unknown error")
+        )));
+    }
+
+    tracing::info!(
+        source = %path.display(),
+        "decoded audio with ffmpeg (16kHz mono WAV)"
+    );
+
+    // Load the ffmpeg-produced WAV (already 16kHz mono)
+    let result = load_wav(&tmp_wav);
+
+    // Clean up temp file
+    let _ = std::fs::remove_file(&tmp_wav);
+
+    result
 }
 
 /// Decode audio with symphonia (handles m4a, mp3, ogg, etc.)
@@ -418,6 +537,95 @@ fn normalize_audio(mut samples: Vec<f32>) -> Vec<f32> {
     samples
 }
 
+/// Detect and remove repetition loops from whisper output (issue #21).
+///
+/// Whisper's decoder can get stuck repeating the same text across consecutive segments,
+/// especially on non-English audio. This function detects runs of 3+ consecutive segments
+/// with >80% text overlap and collapses them to the first occurrence.
+fn dedup_segments(lines: Vec<String>) -> Vec<String> {
+    if lines.len() < 3 {
+        return lines;
+    }
+
+    // Extract just the text portion (after the timestamp) for comparison
+    fn text_part(line: &str) -> &str {
+        // Lines look like "[0:00] some text"
+        line.find("] ").map(|i| &line[i + 2..]).unwrap_or(line)
+    }
+
+    // Simple text similarity: ratio of matching chars to total chars (normalized)
+    fn similarity(a: &str, b: &str) -> f64 {
+        if a.is_empty() || b.is_empty() {
+            return 0.0;
+        }
+        let a_lower = a.to_lowercase();
+        let b_lower = b.to_lowercase();
+        if a_lower == b_lower {
+            return 1.0;
+        }
+        // Use longest common substring ratio as a fast similarity measure
+        let (short, long) = if a_lower.len() <= b_lower.len() {
+            (&a_lower, &b_lower)
+        } else {
+            (&b_lower, &a_lower)
+        };
+        if long.contains(short.as_str()) {
+            return short.len() as f64 / long.len() as f64;
+        }
+        // Count matching words as fallback
+        let a_words: Vec<&str> = a_lower.split_whitespace().collect();
+        let b_words: Vec<&str> = b_lower.split_whitespace().collect();
+        let matching = a_words.iter().filter(|w| b_words.contains(w)).count();
+        let total = a_words.len().max(b_words.len());
+        if total == 0 {
+            return 0.0;
+        }
+        matching as f64 / total as f64
+    }
+
+    let mut result = Vec::with_capacity(lines.len());
+    let mut i = 0;
+
+    while i < lines.len() {
+        // Look ahead for a run of similar segments
+        let base_text = text_part(&lines[i]);
+        let mut run_end = i + 1;
+
+        while run_end < lines.len() {
+            let candidate = text_part(&lines[run_end]);
+            if similarity(base_text, candidate) >= 0.8 {
+                run_end += 1;
+            } else {
+                break;
+            }
+        }
+
+        let run_len = run_end - i;
+
+        if run_len >= 3 {
+            // Repetition detected — keep only the first segment
+            tracing::warn!(
+                first_segment = i,
+                repeated_count = run_len,
+                text = base_text,
+                "detected repetition loop in whisper output — collapsing {} segments",
+                run_len
+            );
+            result.push(lines[i].clone());
+            result.push(format!(
+                "[...] [repeated audio removed — {} identical segments collapsed]",
+                run_len - 1
+            ));
+            i = run_end;
+        } else {
+            result.push(lines[i].clone());
+            i += 1;
+        }
+    }
+
+    result
+}
+
 /// Strip silence from audio using energy detection, replacing long gaps with short padding.
 ///
 /// Whisper hallucinates repeating text when fed long silence segments,
@@ -589,6 +797,39 @@ fn resolve_model_path(config: &Config) -> Result<PathBuf, TranscribeError> {
     )))
 }
 
+/// Resolve the Silero VAD model path. Returns None if VAD is disabled or model not found.
+#[cfg(feature = "whisper")]
+fn resolve_vad_model_path(config: &Config) -> Option<PathBuf> {
+    let vad_model = &config.transcription.vad_model;
+    if vad_model.is_empty() {
+        return None;
+    }
+
+    let model_dir = &config.transcription.model_path;
+    let candidates = [
+        model_dir.join(format!("ggml-{}.bin", vad_model)),
+        model_dir.join(format!("{}.bin", vad_model)),
+    ];
+
+    for candidate in &candidates {
+        if candidate.exists() {
+            return Some(candidate.clone());
+        }
+    }
+
+    // Try as absolute path
+    let direct = PathBuf::from(vad_model);
+    if direct.exists() {
+        return Some(direct);
+    }
+
+    tracing::debug!(
+        vad_model = vad_model,
+        "VAD model not found — falling back to energy-based silence stripping"
+    );
+    None
+}
+
 /// Build whisper FullParams with sane defaults matching whisper.cpp CLI.
 ///
 /// The whisper.cpp CLI uses `best_of=5`, entropy/logprob thresholds, and
@@ -596,10 +837,15 @@ fn resolve_model_path(config: &Config) -> Result<PathBuf, TranscribeError> {
 /// audio. Without these, `Greedy { best_of: 1 }` can repeat gibberish
 /// indefinitely (see GitHub issue #21).
 ///
+/// When a Silero VAD model is available, enables integrated VAD so whisper
+/// only transcribes speech segments (matching whisper-cli behavior exactly).
+///
 /// Use this for batch transcription. For latency-sensitive streaming,
 /// use [`streaming_whisper_params`] instead.
 #[cfg(feature = "whisper")]
-pub fn default_whisper_params<'a, 'b>() -> whisper_rs::FullParams<'a, 'b> {
+pub fn default_whisper_params<'a, 'b>(
+    vad_model_path: Option<&str>,
+) -> whisper_rs::FullParams<'a, 'b> {
     let mut params =
         whisper_rs::FullParams::new(whisper_rs::SamplingStrategy::Greedy { best_of: 5 });
 
@@ -610,6 +856,16 @@ pub fn default_whisper_params<'a, 'b>() -> whisper_rs::FullParams<'a, 'b> {
     params.set_logprob_thold(-1.0); // flag segments with avg logprob below this
     params.set_no_speech_thold(0.6); // probability threshold for silence detection
     params.set_suppress_blank(true); // suppress blank/repeated token hallucinations
+
+    // Enable Silero VAD if model is available — this is the key difference vs whisper-cli.
+    // Without VAD, silence segments trigger decoder hallucination loops, especially on
+    // non-English audio (issue #21).
+    if let Some(path) = vad_model_path {
+        params.set_vad_model_path(Some(path));
+        params.enable_vad(true);
+        params.set_vad_params(whisper_rs::WhisperVadParams::default());
+        tracing::info!("Silero VAD enabled for transcription");
+    }
 
     // Suppress noisy output
     params.set_print_special(false);
@@ -714,6 +970,7 @@ mod tests {
                 model_path: PathBuf::from("/tmp/no-such-dir"),
                 min_words: 10,
                 language: Some("en".into()),
+                vad_model: String::new(),
             },
             ..Config::default()
         };
@@ -874,5 +1131,90 @@ mod tests {
             "440Hz tone should survive resampling with peak > 0.8, got {}",
             peak
         );
+    }
+
+    #[test]
+    fn dedup_no_repetition() {
+        let lines = vec![
+            "[0:00] Hello world".into(),
+            "[0:03] How are you".into(),
+            "[0:06] Fine thanks".into(),
+        ];
+        let result = dedup_segments(lines.clone());
+        assert_eq!(result, lines);
+    }
+
+    #[test]
+    fn dedup_collapses_exact_repetition() {
+        let lines = vec![
+            "[0:00] Hello world".into(),
+            "[0:03] Hello world".into(),
+            "[0:06] Hello world".into(),
+            "[0:09] Hello world".into(),
+            "[0:12] Something different".into(),
+        ];
+        let result = dedup_segments(lines);
+        assert_eq!(result.len(), 3); // first + marker + different
+        assert!(result[0].contains("Hello world"));
+        assert!(result[1].contains("repeated audio removed"));
+        assert!(result[2].contains("Something different"));
+    }
+
+    #[test]
+    fn dedup_collapses_near_identical() {
+        // Whisper often produces slight variations of the same repeated text
+        let lines = vec![
+            "[0:00] Ok bene le macedi diesel".into(),
+            "[0:03] Ok, bene le macedi diesel".into(),
+            "[0:06] Ok bene, le macedi diesel".into(),
+            "[0:09] Good morning".into(),
+        ];
+        let result = dedup_segments(lines);
+        assert_eq!(result.len(), 3); // first + marker + different
+        assert!(result[1].contains("repeated audio removed"));
+    }
+
+    #[test]
+    fn dedup_leaves_two_similar_alone() {
+        // Only 2 similar — below threshold of 3
+        let lines = vec![
+            "[0:00] Hello world".into(),
+            "[0:03] Hello world".into(),
+            "[0:06] Something else".into(),
+        ];
+        let result = dedup_segments(lines.clone());
+        assert_eq!(result, lines);
+    }
+
+    #[test]
+    fn dedup_handles_empty() {
+        let result = dedup_segments(vec![]);
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn dedup_handles_single_line() {
+        let lines = vec!["[0:00] Hello".into()];
+        let result = dedup_segments(lines.clone());
+        assert_eq!(result, lines);
+    }
+
+    #[test]
+    fn dedup_multiple_runs() {
+        let lines = vec![
+            "[0:00] First phrase".into(),
+            "[0:03] First phrase".into(),
+            "[0:06] First phrase".into(),
+            "[0:09] Second phrase".into(),
+            "[0:12] Second phrase".into(),
+            "[0:15] Second phrase".into(),
+            "[0:18] Second phrase".into(),
+            "[0:21] Normal text".into(),
+        ];
+        let result = dedup_segments(lines);
+        // Two collapsed runs + normal text
+        assert_eq!(result.len(), 5); // first + marker + second + marker + normal
+        assert!(result[1].contains("2 identical"));
+        assert!(result[3].contains("3 identical"));
     }
 }

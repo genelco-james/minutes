@@ -429,7 +429,7 @@ fn process_utterance(
 ) -> Option<DictationResult> {
     let mut state = ctx.create_state().ok()?;
 
-    let mut params = crate::transcribe::default_whisper_params();
+    let mut params = crate::transcribe::default_whisper_params(None);
     params.set_n_threads(num_cpus());
     params.set_language(config.transcription.language.as_deref());
 
