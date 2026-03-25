@@ -1,13 +1,11 @@
 # TODOS.md — Minutes
 
-## P1: Real-Time Streaming Whisper for Dictation
-**What:** Replace batch whisper (transcribe after silence) with streaming whisper — text appears progressively as the user speaks. Feed audio chunks to whisper in ~2-second rolling windows with segment stitching to produce continuous output.
-**Why:** The single biggest UX upgrade to dictation. Transforms the experience from "speak, wait 2s, see text" to "text appears as you speak" (WisprFlow/Monologue parity). The streaming.rs + VAD infra is already built — this is the whisper layer on top.
-**Pros:** Dramatically more responsive dictation. Makes dictation feel like a real text input method rather than a batch processor. Builds directly on existing AudioStream + VAD.
-**Cons:** Segment stitching is complex (whisper can re-transcribe overlapping audio differently). Needs careful handling of partial results vs. final results. Higher CPU usage from continuous whisper inference.
-**Context:** Identified as highest-leverage follow-up during dictation CEO review (2026-03-23). Reprioritized from P2 → P1 on 2026-03-24 — biggest daily-use impact.
-**Effort:** L (human: ~3 weeks / CC: ~3-4 hours)
-**Depends on:** Dictation Lite shipped (v0.6.0). Model preload pattern from dictation.rs provides the foundation.
+## P1: Dictation Shortcut Settings Simplification
+**What:** Merge the two independent shortcut systems (standard shortcut + raw key hotkey) into one unified dropdown with value-prefix dispatch. See PLAN.dictation-ux.md for full spec.
+**Why:** Current 6-control settings section is confusing. Users don't know which shortcut system to use.
+**Effort:** M (human: ~1 week / CC: ~30 min)
+**Depends on:** Nothing — can be done independently.
+**Context:** Identified during dictation UX design review (2026-03-24). Streaming whisper engine is shipped (v0.7.2). Overlay UX improvements (streaming text, loading state, silence countdown) are implemented.
 
 ## P2: Full Ambient Memory (Voice Memo Intelligence)
 **What:** Upgrade voice memo pipeline with LLM auto-classification (person, project, topic tags), intent/decision extraction on voice memos, and include voice memos in `/minutes weekly` synthesis alongside meetings.

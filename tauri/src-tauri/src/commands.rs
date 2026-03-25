@@ -2825,7 +2825,7 @@ fn show_dictation_overlay(app: &tauri::AppHandle) {
 
     // Position: bottom-right HUD, anchored to the current monitor work area.
     let width = 320.0;
-    let height = 60.0;
+    let height = 88.0;
     let inset_x = 16.0;
     let inset_y = 16.0;
 
@@ -3029,6 +3029,7 @@ fn start_dictation_session(
     }
 
     show_dictation_overlay(app);
+    app.emit("dictation:state", "loading").ok();
 
     state.dictation_stop_flag.store(false, Ordering::Relaxed);
     state.dictation_active.store(true, Ordering::Relaxed);
@@ -3058,15 +3059,25 @@ fn start_dictation_session(
                     DictationEvent::Accumulating => "accumulating",
                     DictationEvent::Processing => "processing",
                     DictationEvent::PartialText(_) => "partial",
+                    DictationEvent::SilenceCountdown { .. } => "",
                     DictationEvent::Success => "success",
                     DictationEvent::Error => "error",
                     DictationEvent::Cancelled => "cancelled",
                     DictationEvent::Yielded => "yielded",
                 };
-                app_for_events.emit("dictation:state", state_str).ok();
+                if !state_str.is_empty() {
+                    app_for_events.emit("dictation:state", state_str).ok();
+                }
 
                 if let DictationEvent::PartialText(text) = &event {
                     app_for_events.emit("dictation:partial", text.as_str()).ok();
+                }
+
+                if let DictationEvent::SilenceCountdown { total_ms, remaining_ms } = &event {
+                    app_for_events.emit("dictation:silence", serde_json::json!({
+                        "total_ms": total_ms,
+                        "remaining_ms": remaining_ms,
+                    })).ok();
                 }
 
                 if matches!(&event, DictationEvent::Accumulating) {

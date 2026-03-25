@@ -154,6 +154,20 @@ Every state must be visible in every surface (tray, CLI, MCP).
 - Ghost context: `👻`
 - Action item: `☐` / `☑`
 
+## Overlay Exceptions
+
+The dictation overlay (floating HUD) uses its own color tokens that intentionally
+diverge from the main app. A transparent, always-on-top floating surface needs
+different treatment than in-app panels.
+
+```css
+/* Dictation overlay — tauri/src/dictation-overlay.html */
+--panel: rgba(28, 28, 34, 0.96);     /* warmer than --bg-elevated */
+--panel-edge: rgba(255, 255, 255, 0.08);
+--accent: #79a9ff;                    /* softer blue than --accent */
+--text-tertiary: rgba(238, 236, 231, 0.32);
+```
+
 ## Accessibility
 
 - All interactive elements are keyboard-accessible

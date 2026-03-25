@@ -62,6 +62,8 @@ pub enum DictationEvent {
     Processing,
     /// Partial transcription (streaming mode) — text updates progressively.
     PartialText(String),
+    /// Silence countdown: total timeout ms, remaining ms.
+    SilenceCountdown { total_ms: u64, remaining_ms: u64 },
     Success,
     Error,
     Cancelled,
@@ -253,6 +255,13 @@ where
                 }
 
                 total_silence_ms += 100;
+                if has_spoken && !was_speaking && total_silence_ms < config.dictation.silence_timeout_ms {
+                    let remaining = config.dictation.silence_timeout_ms - total_silence_ms;
+                    on_event(DictationEvent::SilenceCountdown {
+                        total_ms: config.dictation.silence_timeout_ms,
+                        remaining_ms: remaining,
+                    });
+                }
                 if has_spoken
                     && !was_speaking
                     && total_silence_ms >= config.dictation.silence_timeout_ms
@@ -389,7 +398,30 @@ fn write_to_clipboard(text: &str) -> Result<(), String> {
     Ok(())
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(target_os = "windows")]
+fn write_to_clipboard(text: &str) -> Result<(), String> {
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+
+    let mut child = Command::new("clip")
+        .stdin(Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("failed to spawn clip.exe: {}", e))?;
+
+    let write_result = if let Some(mut stdin) = child.stdin.take() {
+        stdin.write_all(text.as_bytes())
+    } else {
+        Ok(())
+    };
+
+    let _ = child.wait();
+
+    write_result.map_err(|e| format!("failed to write to clip.exe: {}", e))?;
+    tracing::debug!(len = text.len(), "text written to clipboard");
+    Ok(())
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
 fn write_to_clipboard(_text: &str) -> Result<(), String> {
     Err("clipboard write not implemented on this platform".into())
 }

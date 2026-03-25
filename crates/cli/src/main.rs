@@ -2206,6 +2206,7 @@ fn cmd_dictate(stdout: bool, note_only: bool, config: &Config) -> Result<()> {
                     // Clear line and show partial text (streaming preview)
                     eprint!("\r\x1b[K[minutes] {}", text);
                 }
+                DictationEvent::SilenceCountdown { .. } => {} // CLI doesn't show countdown
                 DictationEvent::Success => {
                     eprintln!(); // newline after partial text
                     eprintln!("[minutes] Done — text copied to clipboard");

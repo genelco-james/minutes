@@ -831,6 +831,14 @@
       background: rgba(167, 139, 202, 0.6);
     }
 
+    .meeting-badge.dictation {
+      background: rgba(121, 169, 255, 0.4);
+    }
+
+    .meeting-item:hover .meeting-badge.dictation {
+      background: rgba(121, 169, 255, 0.6);
+    }
+
     /* ── Meeting detail view ── */
     .detail-overlay {
       position: fixed;
@@ -1580,7 +1588,7 @@
 
   <!-- Search -->
   <div class="search-wrap search-icon">
-    <input class="search-box" type="text" placeholder="Search meetings and memos..." id="search-input" />
+    <input class="search-box" type="text" placeholder="Search meetings, memos, and dictations..." id="search-input" />
   </div>
 
   <!-- Upcoming meeting suggestion -->
@@ -2939,7 +2947,8 @@
           }
 
           const badge = document.createElement('span');
-          badge.className = 'meeting-badge' + (m.content_type === 'memo' ? ' memo' : '');
+          const typeClass = m.content_type === 'memo' ? ' memo' : m.content_type === 'dictation' ? ' dictation' : '';
+          badge.className = 'meeting-badge' + typeClass;
           badge.textContent = m.content_type || 'meeting';
 
           item.appendChild(info);
