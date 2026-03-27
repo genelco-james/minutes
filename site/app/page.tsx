@@ -223,7 +223,7 @@ export default function Home() {
       {/* Footer */}
       <footer className="py-12 border-t border-white/[0.06] text-center text-[13px] text-[#666]">
         <p>minutes is MIT licensed and free forever.</p>
-        <p className="mt-1">Built by <a href="https://x1wealth.com" className="text-[#888] hover:text-[#a1a1a1] transition-colors">Mat Silverstein</a></p>
+        <p className="mt-1">Built by <a href="https://github.com/silverstein" className="text-[#888] hover:text-[#a1a1a1] transition-colors">Mat Silverstein</a>, founder of <a href="https://x1wealth.com" className="text-[#888] hover:text-[#a1a1a1] transition-colors">X1 Wealth</a></p>
         <p className="mt-2">
           <a href="https://github.com/silverstein/minutes" className="text-[#666] hover:text-[#a1a1a1] transition-colors">GitHub</a>
           {" · "}

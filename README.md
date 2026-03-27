@@ -671,4 +671,4 @@ See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
 
-MIT — Built by [Mat Silverstein](https://x1wealth.com)
+MIT — Built by [Mat Silverstein](https://github.com/silverstein), founder of [X1 Wealth](https://x1wealth.com)
