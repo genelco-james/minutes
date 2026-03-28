@@ -621,7 +621,7 @@ fn summarize_with_mistral(
     let chunks = build_prompt(transcript, config.summarization.chunk_max_tokens);
     let mut all_summaries = Vec::new();
 
-    let screen_content = encode_screens_for_openai(screen_files);
+    let screen_content = encode_screens_for_mistral(screen_files);
 
     for (i, chunk) in chunks.iter().enumerate() {
         if chunks.len() > 1 {
@@ -791,6 +791,20 @@ fn encode_screens_for_claude(screen_files: &[std::path::PathBuf]) -> Vec<serde_j
                     "media_type": "image/png",
                     "data": b64
                 }
+            })
+        })
+        .collect()
+}
+
+/// Encode screenshots as Mistral API image_url content blocks.
+/// Mistral uses a flat `image_url` string (no nested object, no `detail` field).
+fn encode_screens_for_mistral(screen_files: &[std::path::PathBuf]) -> Vec<serde_json::Value> {
+    read_and_encode_images(screen_files)
+        .into_iter()
+        .map(|(_name, b64)| {
+            serde_json::json!({
+                "type": "image_url",
+                "image_url": format!("data:image/png;base64,{}", b64)
             })
         })
         .collect()
