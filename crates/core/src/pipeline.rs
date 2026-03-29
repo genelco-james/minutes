@@ -425,6 +425,24 @@ where
         }
     }
 
+    // Fallback: if transcript still has UNKNOWN labels (diarization ran but produced
+    // no segments, or speakers==0), replace with configured identity name.
+    if transcript.contains("[UNKNOWN ") {
+        if let Some(my_name) = config.identity.name.as_ref() {
+            speaker_map.push(diarize::SpeakerAttribution {
+                speaker_label: "UNKNOWN".to_string(),
+                name: my_name.clone(),
+                confidence: diarize::Confidence::High,
+                source: diarize::AttributionSource::Deterministic,
+            });
+            transcript = diarize::apply_confirmed_names(&transcript, &speaker_map);
+            tracing::info!(
+                name = %my_name,
+                "Fallback: replaced UNKNOWN speaker labels with configured identity"
+            );
+        }
+    }
+
     // Step 5: Write markdown (always)
     let duration = estimate_duration(audio_path);
     let auto_title = title
