@@ -327,9 +327,15 @@ pub fn show_call_prompt(app: &tauri::AppHandle, app_name: &str) {
         .always_on_top(true)
         .focused(true)
         .skip_taskbar(true)
+        .visible_on_all_workspaces(true)
         .build()
     {
-        Ok(_) => eprintln!("[call-detect] prompt shown for: {}", app_name),
+        Ok(win) => {
+            // Force the window to front — menu bar apps may not activate automatically
+            win.set_always_on_top(true).ok();
+            win.set_focus().ok();
+            eprintln!("[call-detect] prompt shown for: {}", app_name);
+        }
         Err(e) => eprintln!("[call-detect] failed to show prompt: {}", e),
     }
 }
@@ -355,7 +361,11 @@ pub fn show_stop_countdown(app: &tauri::AppHandle) {
         .skip_taskbar(true)
         .build()
     {
-        Ok(_) => eprintln!("[call-detect] stop countdown shown"),
+        Ok(win) => {
+            win.set_always_on_top(true).ok();
+            win.set_focus().ok();
+            eprintln!("[call-detect] stop countdown shown");
+        }
         Err(e) => eprintln!("[call-detect] failed to show stop countdown: {}", e),
     }
 }
@@ -1064,8 +1074,10 @@ fn main() {
 
             // Start call detection background loop
             let call_triggered_app = Arc::new(Mutex::new(None::<String>));
+            let detected_meeting_title = Arc::new(Mutex::new(None::<String>));
             app.manage(call_detect::CallDetectState {
                 call_triggered_app: call_triggered_app.clone(),
+                detected_meeting_title: detected_meeting_title.clone(),
             });
             if commands::supports_call_detection() {
                 let config = minutes_core::config::Config::load();
@@ -1076,7 +1088,57 @@ fn main() {
                     processing_clone,
                     stop_for_detector,
                     call_triggered_app,
+                    detected_meeting_title,
                 );
+            }
+
+            // Audio cleanup — delete processed recordings older than 2 days.
+            // Runs hourly in the background. Only targets ~/.minutes/inbox/processed/
+            // (source audio that has already been transcribed to markdown).
+            {
+                std::thread::spawn(move || {
+                    const CLEANUP_INTERVAL_SECS: u64 = 3600; // 1 hour
+                    const MAX_AGE_SECS: u64 = 2 * 24 * 3600; // 2 days
+
+                    // Wait a bit before first cleanup so app finishes launching
+                    std::thread::sleep(std::time::Duration::from_secs(60));
+
+                    loop {
+                        let processed_dir = minutes_core::config::Config::minutes_dir().join("inbox/processed");
+                        if processed_dir.is_dir() {
+                            if let Ok(entries) = std::fs::read_dir(&processed_dir) {
+                                let now = std::time::SystemTime::now();
+                                for entry in entries.flatten() {
+                                    let path = entry.path();
+                                    if !path.is_file() {
+                                        continue;
+                                    }
+                                    let age = path
+                                        .metadata()
+                                        .ok()
+                                        .and_then(|m| m.modified().ok())
+                                        .and_then(|t| now.duration_since(t).ok());
+                                    if let Some(age) = age {
+                                        if age.as_secs() > MAX_AGE_SECS {
+                                            match std::fs::remove_file(&path) {
+                                                Ok(()) => eprintln!(
+                                                    "[cleanup] deleted old audio: {}",
+                                                    path.display()
+                                                ),
+                                                Err(e) => eprintln!(
+                                                    "[cleanup] failed to delete {}: {}",
+                                                    path.display(),
+                                                    e
+                                                ),
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        std::thread::sleep(std::time::Duration::from_secs(CLEANUP_INTERVAL_SECS));
+                    }
+                });
             }
 
             // Calendar items in tray menu — refresh every minute
