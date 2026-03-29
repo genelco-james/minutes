@@ -1602,6 +1602,19 @@ pub fn cmd_stop_recording(state: tauri::State<AppState>) -> Result<(), String> {
 }
 
 #[tauri::command]
+pub fn cmd_mark_call_triggered(
+    state: tauri::State<crate::call_detect::CallDetectState>,
+    app_name: String,
+) -> Result<(), String> {
+    let mut triggered = state
+        .call_triggered_app
+        .lock()
+        .map_err(|e| e.to_string())?;
+    *triggered = Some(app_name);
+    Ok(())
+}
+
+#[tauri::command]
 pub fn cmd_add_note(text: String) -> Result<String, String> {
     minutes_core::notes::add_note(&text)
 }

@@ -1,4 +1,6 @@
 //! Auto-detect video/voice calls and prompt the user to start recording.
+//! Also monitors active call-triggered recordings and auto-stops when the
+//! meeting ends (detected via meeting window closing or mic silence fallback).
 //!
 //! Detection strategy: poll for known call-app processes that are actively
 //! using the microphone. Two signals together (process running + mic active)
@@ -29,6 +31,22 @@ pub struct CallDetectedPayload {
     pub process_name: String,
 }
 
+/// Payload emitted to the frontend when a call-triggered recording auto-stops.
+#[derive(Clone, serde::Serialize)]
+pub struct CallEndedPayload {
+    pub app_name: String,
+}
+
+/// Shared state for call detection, accessible from Tauri commands.
+/// Tracks which app triggered the current recording (if any) so the
+/// detection loop can monitor for call end and auto-stop.
+pub struct CallDetectState {
+    pub call_triggered_app: Arc<Mutex<Option<String>>>,
+}
+
+/// Grace period for mic-silence fallback (apps without window detection).
+const MIC_SILENCE_GRACE_SECS: u64 = 30;
+
 impl CallDetector {
     pub fn new(config: CallDetectionConfig) -> Self {
         Self {
@@ -38,11 +56,19 @@ impl CallDetector {
     }
 
     /// Start the background detection loop. Runs in its own thread.
+    ///
+    /// Two modes:
+    /// - **Start-detection**: When not recording, polls for active calls and
+    ///   shows a floating prompt to start recording.
+    /// - **End-detection**: When recording was triggered by a call prompt,
+    ///   monitors for meeting end and auto-stops the recording.
     pub fn start(
         self: Arc<Self>,
         app: tauri::AppHandle,
         recording: Arc<AtomicBool>,
         processing: Arc<AtomicBool>,
+        stop_flag: Arc<AtomicBool>,
+        call_triggered_app: Arc<Mutex<Option<String>>>,
     ) {
         if !self.config.enabled {
             eprintln!("[call-detect] disabled in config");
@@ -60,38 +86,114 @@ impl CallDetector {
             // Initial delay to let the app finish launching
             std::thread::sleep(Duration::from_secs(5));
 
+            // Counter for mic-silence fallback (used for apps without window detection)
+            let mut silence_miss_count: u32 = 0;
+            let grace_checks =
+                (MIC_SILENCE_GRACE_SECS / self.config.poll_interval_secs.max(1)) as u32;
+
             loop {
                 std::thread::sleep(interval);
 
-                // Skip if already recording or processing
-                if recording.load(Ordering::Relaxed) || processing.load(Ordering::Relaxed) {
+                // Skip entirely while processing a previous recording
+                if processing.load(Ordering::Relaxed) {
                     continue;
                 }
 
-                if let Some((display_name, process_name)) = self.detect_active_call() {
-                    if !self.in_cooldown(&process_name) {
-                        eprintln!(
-                            "[call-detect] detected: {} ({})",
-                            display_name, process_name
-                        );
-                        self.set_cooldown(&process_name);
+                let is_recording = recording.load(Ordering::Relaxed);
+                let triggered_app = call_triggered_app.lock().ok().and_then(|g| g.clone());
 
-                        // Notify via macOS notification
-                        crate::commands::show_user_notification(
-                            &app,
-                            &format!("{} call detected", display_name),
-                            "Open Minutes to start recording",
-                        );
+                if is_recording {
+                    // ── END-DETECTION MODE ─────────────────────────
+                    // Only monitor for call end if THIS recording was started via call prompt
+                    if let Some(ref app_name) = triggered_app {
+                        let meeting_active = if has_window_detection(app_name) {
+                            // Primary signal: check if the call app's meeting window is open
+                            has_active_meeting_window(app_name)
+                        } else {
+                            // Fallback: use mic activity with grace period
+                            if is_mic_in_use() {
+                                silence_miss_count = 0;
+                                true
+                            } else {
+                                silence_miss_count += 1;
+                                silence_miss_count < grace_checks
+                            }
+                        };
 
-                        // Emit event to frontend for in-app banner
-                        app.emit(
-                            "call:detected",
-                            CallDetectedPayload {
-                                app_name: display_name,
-                                process_name,
-                            },
-                        )
-                        .ok();
+                        if !meeting_active {
+                            eprintln!(
+                                "[call-detect] meeting ended for {} — auto-stopping recording",
+                                app_name
+                            );
+
+                            // Auto-stop the recording
+                            if let Err(e) =
+                                crate::commands::request_stop(&recording, &stop_flag)
+                            {
+                                eprintln!("[call-detect] auto-stop failed: {}", e);
+                            }
+
+                            // Show completion notification
+                            let display = display_name_for(app_name);
+                            crate::commands::show_user_notification(
+                                &app,
+                                "Recording saved",
+                                &format!("{} call ended", display),
+                            );
+
+                            // Emit event to frontend
+                            app.emit(
+                                "call:ended",
+                                CallEndedPayload {
+                                    app_name: display,
+                                },
+                            )
+                            .ok();
+
+                            // Clear triggered app state
+                            if let Ok(mut g) = call_triggered_app.lock() {
+                                *g = None;
+                            }
+
+                            // Reset cooldown for this app so a new call can be detected
+                            self.clear_cooldown(app_name);
+                            silence_miss_count = 0;
+                        }
+                    }
+                    // If recording was started manually (triggered_app is None), do nothing
+                } else {
+                    // ── START-DETECTION MODE ───────────────────────
+                    // Reset silence counter when not recording
+                    silence_miss_count = 0;
+
+                    // Also clear stale call_triggered_app if recording stopped externally
+                    if triggered_app.is_some() {
+                        if let Ok(mut g) = call_triggered_app.lock() {
+                            *g = None;
+                        }
+                    }
+
+                    if let Some((display_name, process_name)) = self.detect_active_call() {
+                        if !self.in_cooldown(&process_name) {
+                            eprintln!(
+                                "[call-detect] detected: {} ({})",
+                                display_name, process_name
+                            );
+                            self.set_cooldown(&process_name);
+
+                            // Show floating prompt window instead of macOS notification
+                            crate::show_call_prompt(&app, &display_name);
+
+                            // Emit event to frontend for potential in-app banner
+                            app.emit(
+                                "call:detected",
+                                CallDetectedPayload {
+                                    app_name: display_name,
+                                    process_name,
+                                },
+                            )
+                            .ok();
+                        }
                     }
                 }
             }
@@ -138,6 +240,11 @@ impl CallDetector {
         let cutoff = Duration::from_secs(self.config.cooldown_minutes * 60 * 2);
         entries.retain(|(_, time)| time.elapsed() < cutoff);
     }
+
+    fn clear_cooldown(&self, process_name: &str) {
+        let mut entries = self.last_notified.lock().unwrap();
+        entries.retain(|(name, _)| name != process_name);
+    }
 }
 
 /// Friendly display name for a process name.
@@ -149,6 +256,101 @@ fn display_name_for(process: &str) -> String {
         "Webex" => "Webex".into(),
         "Slack" => "Slack".into(),
         other => other.into(),
+    }
+}
+
+// ── Meeting window detection ────────────────────────────────
+
+/// Whether we have a window-based detection method for this app.
+fn has_window_detection(app_name: &str) -> bool {
+    matches!(
+        app_name,
+        "Microsoft Teams"
+            | "Microsoft Teams (work or school)"
+            | "Teams"
+            | "zoom.us"
+            | "Zoom"
+            | "FaceTime"
+            | "Slack"
+    )
+}
+
+/// Check if a specific call app has an active meeting window.
+/// Uses macOS System Events via AppleScript to inspect window titles.
+/// Returns `true` if a meeting window is found, `false` if not.
+///
+/// Performance: ~5-10ms per call. Runs every 3s only while recording.
+fn has_active_meeting_window(app_name: &str) -> bool {
+    let script = match app_name {
+        // Teams: when in a meeting, the app has a window. When you leave, the
+        // meeting window closes. We check for any window on the process.
+        "Microsoft Teams" | "Microsoft Teams (work or school)" | "Teams" => {
+            r#"tell application "System Events"
+    if exists process "Microsoft Teams" then
+        set winCount to count of windows of process "Microsoft Teams"
+        if winCount > 0 then
+            set winNames to name of every window of process "Microsoft Teams"
+            repeat with w in winNames
+                if w contains "Meeting" or w contains "Call" then return "1"
+            end repeat
+            -- Also check for the in-call toolbar window (no specific title)
+            -- Teams shows at least 2 windows during a call
+            if winCount >= 2 then return "1"
+        end if
+    end if
+    return "0"
+end tell"#
+        }
+        // Zoom: meeting window is named "Zoom Meeting" or "Zoom Webinar"
+        "zoom.us" | "Zoom" => {
+            r#"tell application "System Events"
+    if exists process "zoom.us" then
+        set winNames to name of every window of process "zoom.us"
+        repeat with w in winNames
+            if w contains "Zoom Meeting" or w contains "Zoom Webinar" then return "1"
+        end repeat
+    end if
+    return "0"
+end tell"#
+        }
+        // FaceTime: has a window only during an active call
+        "FaceTime" => {
+            r#"tell application "System Events"
+    if exists process "FaceTime" then
+        if (count of windows of process "FaceTime") > 0 then return "1"
+    end if
+    return "0"
+end tell"#
+        }
+        // Slack: huddle windows
+        "Slack" => {
+            r#"tell application "System Events"
+    if exists process "Slack" then
+        set winNames to name of every window of process "Slack"
+        repeat with w in winNames
+            if w contains "Huddle" then return "1"
+        end repeat
+    end if
+    return "0"
+end tell"#
+        }
+        _ => return true, // Unknown app: assume active (fallback to mic silence)
+    };
+
+    let output = std::process::Command::new("osascript")
+        .arg("-e")
+        .arg(script)
+        .output();
+
+    match output {
+        Ok(out) if out.status.success() => {
+            String::from_utf8_lossy(&out.stdout).trim() == "1"
+        }
+        _ => {
+            // If AppleScript fails, assume meeting is still active to avoid false stops
+            eprintln!("[call-detect] window check failed for {} — assuming active", app_name);
+            true
+        }
     }
 }
 
@@ -264,11 +466,36 @@ mod tests {
     }
 
     #[test]
+    fn cooldown_clear() {
+        let detector = CallDetector::new(CallDetectionConfig {
+            enabled: true,
+            poll_interval_secs: 1,
+            cooldown_minutes: 5,
+            apps: vec!["zoom.us".into()],
+        });
+
+        detector.set_cooldown("zoom.us");
+        assert!(detector.in_cooldown("zoom.us"));
+        detector.clear_cooldown("zoom.us");
+        assert!(!detector.in_cooldown("zoom.us"));
+    }
+
+    #[test]
     fn display_names() {
         assert_eq!(display_name_for("zoom.us"), "Zoom");
         assert_eq!(display_name_for("Microsoft Teams"), "Teams");
         assert_eq!(display_name_for("FaceTime"), "FaceTime");
         assert_eq!(display_name_for("SomeOtherApp"), "SomeOtherApp");
+    }
+
+    #[test]
+    fn window_detection_mapping() {
+        assert!(has_window_detection("Microsoft Teams"));
+        assert!(has_window_detection("Teams"));
+        assert!(has_window_detection("zoom.us"));
+        assert!(has_window_detection("FaceTime"));
+        assert!(has_window_detection("Slack"));
+        assert!(!has_window_detection("SomeOtherApp"));
     }
 
     #[test]

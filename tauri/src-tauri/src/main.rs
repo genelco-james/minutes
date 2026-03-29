@@ -270,6 +270,52 @@ fn show_meeting_prompt(app: &tauri::AppHandle, event: &minutes_core::calendar::C
     }
 }
 
+/// Show a floating overlay prompt when a call is detected.
+/// The overlay has "Start Recording" + "Dismiss" buttons.
+pub fn show_call_prompt(app: &tauri::AppHandle, app_name: &str) {
+    // Don't show if already recording or processing
+    if let Some(state) = app.try_state::<commands::AppState>() {
+        if state.recording.load(Ordering::Relaxed) || state.processing.load(Ordering::Relaxed) {
+            return;
+        }
+    }
+
+    // Close any existing call prompt window
+    if let Some(win) = app.get_webview_window("call-prompt") {
+        win.close().ok();
+    }
+
+    // Encode app name in URL fragment
+    let encoded = app_name
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || "-._~ ".contains(c) {
+                c.to_string()
+            } else {
+                format!("%{:02X}", c as u32)
+            }
+        })
+        .collect::<String>();
+    let url = format!("call-prompt.html#{}", encoded);
+
+    let (pos_x, pos_y) = get_top_right_position(340.0, 120.0);
+
+    match WebviewWindowBuilder::new(app, "call-prompt", WebviewUrl::App(url.into()))
+        .title("Call Detected")
+        .inner_size(340.0, 120.0)
+        .position(pos_x, pos_y)
+        .resizable(false)
+        .decorations(false)
+        .always_on_top(true)
+        .focused(true)
+        .skip_taskbar(true)
+        .build()
+    {
+        Ok(_) => eprintln!("[call-detect] prompt shown for: {}", app_name),
+        Err(e) => eprintln!("[call-detect] failed to show prompt: {}", e),
+    }
+}
+
 /// Calculate position for top-right placement, 16px from screen edge.
 fn get_top_right_position(width: f64, height: f64) -> (f64, f64) {
     let _ = height;
@@ -393,6 +439,7 @@ fn main() {
     let recording_clone = recording.clone();
     let recording_for_detector = recording.clone();
     let processing_clone = processing.clone();
+    let stop_for_detector = stop_flag.clone();
     let stop_clone = stop_flag.clone();
 
     tauri::Builder::default()
@@ -941,6 +988,10 @@ fn main() {
             update_tray_state(app.handle(), initial_recording);
 
             // Start call detection background loop
+            let call_triggered_app = Arc::new(Mutex::new(None::<String>));
+            app.manage(call_detect::CallDetectState {
+                call_triggered_app: call_triggered_app.clone(),
+            });
             if commands::supports_call_detection() {
                 let config = minutes_core::config::Config::load();
                 let detector = Arc::new(call_detect::CallDetector::new(config.call_detection));
@@ -948,6 +999,8 @@ fn main() {
                     app.handle().clone(),
                     recording_for_detector,
                     processing_clone,
+                    stop_for_detector,
+                    call_triggered_app,
                 );
             }
 
@@ -1027,6 +1080,7 @@ fn main() {
             commands::cmd_live_transcript_status,
             commands::cmd_live_shortcut_settings,
             commands::cmd_set_live_shortcut,
+            commands::cmd_mark_call_triggered,
         ])
         .run(tauri::generate_context!())
         .expect("error while running minutes app");
