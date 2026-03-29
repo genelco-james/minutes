@@ -36,6 +36,9 @@ pub struct CallDetectedPayload {
 /// detection loop can monitor for call end and auto-stop.
 pub struct CallDetectState {
     pub call_triggered_app: Arc<Mutex<Option<String>>>,
+    /// Meeting title extracted from the call app window (e.g. Teams meeting subject).
+    /// Set when a call is detected; consumed by start_recording to name the output file.
+    pub detected_meeting_title: Arc<Mutex<Option<String>>>,
 }
 
 /// Grace period for mic-silence fallback (apps without window detection).
@@ -63,6 +66,7 @@ impl CallDetector {
         processing: Arc<AtomicBool>,
         _stop_flag: Arc<AtomicBool>,
         call_triggered_app: Arc<Mutex<Option<String>>>,
+        detected_meeting_title: Arc<Mutex<Option<String>>>,
     ) {
         if !self.config.enabled {
             eprintln!("[call-detect] disabled in config");
@@ -70,11 +74,21 @@ impl CallDetector {
         }
 
         let interval = Duration::from_secs(self.config.poll_interval_secs.max(1));
-        eprintln!(
-            "[call-detect] started — polling every {}s for {:?}",
-            interval.as_secs(),
-            self.config.apps
-        );
+
+        // Try to launch event-driven mic monitor
+        let mic_monitor_bin = find_mic_monitor_binary();
+        if mic_monitor_bin.is_some() {
+            eprintln!(
+                "[call-detect] started (event-driven) for {:?}",
+                self.config.apps
+            );
+        } else {
+            eprintln!(
+                "[call-detect] started (polling every {}s) for {:?}",
+                interval.as_secs(),
+                self.config.apps
+            );
+        }
 
         std::thread::spawn(move || {
             // Initial delay to let the app finish launching
@@ -91,9 +105,78 @@ impl CallDetector {
             let mut countdown_shown = false;
             // Window count when we started monitoring (for delta-based detection)
             let mut initial_window_count: Option<u32> = None;
+            // Track mic state from event-driven monitor
+            let mut mic_active = false;
+
+            // Spawn mic_monitor subprocess if available
+            let has_monitor = mic_monitor_bin.is_some();
+            let mic_monitor = mic_monitor_bin.and_then(|path| {
+                std::process::Command::new(path)
+                    .stdout(std::process::Stdio::piped())
+                    .stderr(std::process::Stdio::null())
+                    .spawn()
+                    .ok()
+            });
+
+            // Set up line reader for mic_monitor stdout
+            let mic_reader = mic_monitor.map(|mut child| {
+                use std::io::BufRead;
+                let stdout = child.stdout.take().unwrap();
+                let reader = std::io::BufReader::new(stdout);
+                // Read until READY marker, consuming initial state
+                let mut lines = reader.lines();
+                for line in lines.by_ref() {
+                    match line {
+                        Ok(ref l) if l == "READY" => break,
+                        Ok(ref l) if l == "MIC_ON" => mic_active = true,
+                        Ok(ref l) if l == "MIC_OFF" => mic_active = false,
+                        _ => break,
+                    }
+                }
+                eprintln!("[call-detect] mic_monitor ready, initial mic_active={}", mic_active);
+                (lines, child)
+            });
+
+            // Event-driven mode: use a non-blocking reader thread
+            let (mic_tx, mic_rx) = std::sync::mpsc::channel::<bool>();
+            if let Some((lines, _child)) = mic_reader {
+                let tx = mic_tx.clone();
+                std::thread::spawn(move || {
+                    for line in lines {
+                        match line {
+                            Ok(ref l) if l == "MIC_ON" => { tx.send(true).ok(); }
+                            Ok(ref l) if l == "MIC_OFF" => { tx.send(false).ok(); }
+                            _ => break,
+                        }
+                    }
+                });
+            }
+
+            let event_driven = has_monitor;
 
             loop {
-                std::thread::sleep(interval);
+                if event_driven {
+                    // Event-driven: wait for mic events or timeout for periodic checks
+                    match mic_rx.recv_timeout(interval) {
+                        Ok(state) => {
+                            mic_active = state;
+                            eprintln!("[call-detect] mic event: {}", if mic_active { "ON" } else { "OFF" });
+                        }
+                        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                            // Periodic check for window state during recording
+                        }
+                        Err(_) => {
+                            // Channel disconnected — mic_monitor died, fall back to polling
+                            eprintln!("[call-detect] mic_monitor disconnected, falling back to polling");
+                            std::thread::sleep(interval);
+                            mic_active = is_mic_in_use();
+                        }
+                    }
+                } else {
+                    // Polling mode
+                    std::thread::sleep(interval);
+                    mic_active = is_mic_in_use();
+                }
 
                 // Skip entirely while processing a previous recording
                 if processing.load(Ordering::Relaxed) {
@@ -172,13 +255,40 @@ impl CallDetector {
                     countdown_shown = false;
                     initial_window_count = None;
 
-                    if let Some((display_name, process_name)) = self.detect_active_call() {
+                    // Check if an ignored app (e.g. Wispr Flow) is using the mic — skip detection
+                    if self.is_ignored_app_active() {
+                        // Mic is active from a dictation/voice app, not a meeting
+                        continue;
+                    }
+
+                    if let Some((display_name, process_name)) = self.detect_active_call(mic_active) {
                         if !self.in_cooldown(&process_name) {
+                            // For Teams: verify an actual meeting window exists before prompting.
+                            // Prevents false positives when mic is used by other apps (Wispr Flow, etc.)
+                            // while Teams idles in background.
+                            let is_teams = is_teams_app(&process_name);
+                            let meeting_title = if is_teams {
+                                get_teams_meeting_title()
+                            } else {
+                                None
+                            };
+
+                            if is_teams && meeting_title.is_none() {
+                                // Teams process is running but no meeting window — false positive
+                                eprintln!("[call-detect] Teams running but no meeting window — skipping (likely Wispr Flow or other mic user)");
+                                continue;
+                            }
+
                             eprintln!(
                                 "[call-detect] detected: {} ({})",
                                 display_name, process_name
                             );
                             self.set_cooldown(&process_name);
+
+                            // Store meeting title for naming the output file
+                            if let Ok(mut t) = detected_meeting_title.lock() {
+                                *t = meeting_title;
+                            }
 
                             // Show floating prompt window instead of macOS notification
                             crate::show_call_prompt(&app, &display_name);
@@ -200,20 +310,35 @@ impl CallDetector {
     }
 
     /// Check if any configured call app is running AND the mic is active.
-    fn detect_active_call(&self) -> Option<(String, String)> {
-        // Check mic first — it's the cheaper signal to short-circuit on
-        if !is_mic_in_use() {
+    /// Uses bundle IDs for reliable detection, with process name fallback.
+    fn detect_active_call(&self, mic_active: bool) -> Option<(String, String)> {
+        if !mic_active {
             return None;
         }
 
-        let running = running_process_names();
-
+        // Try bundle ID matching first (reliable)
+        let bundle_ids = running_bundle_ids();
         for config_app in &self.config.apps {
+            // Check if this config entry IS a bundle ID (contains a dot with no spaces)
+            if config_app.contains('.') && !config_app.contains(' ') {
+                if bundle_ids.iter().any(|b| b == config_app) {
+                    let display = display_name_for(config_app);
+                    return Some((display, config_app.clone()));
+                }
+            }
+        }
+
+        // Fallback: process name substring matching (for old-style config entries)
+        let running = running_process_names();
+        for config_app in &self.config.apps {
+            // Skip bundle IDs in this pass
+            if config_app.contains('.') && !config_app.contains(' ') {
+                continue;
+            }
             let config_lower = config_app.to_lowercase();
-            // Substring match: "zoom.us" matches process "zoom.us",
-            // "Microsoft Teams" matches "Microsoft Teams Helper", etc.
             if running.iter().any(|p| {
-                p.to_lowercase().contains(&config_lower) || config_lower.contains(&p.to_lowercase())
+                p.to_lowercase().contains(&config_lower)
+                    || config_lower.contains(&p.to_lowercase())
             }) {
                 let display = display_name_for(config_app);
                 return Some((display, config_app.clone()));
@@ -249,11 +374,38 @@ impl CallDetector {
         let mut entries = self.last_notified.lock().unwrap();
         entries.clear();
     }
+
+    /// Check if any ignored app (e.g., Wispr Flow dictation) is currently running.
+    /// If so, mic activity is likely from dictation, not a meeting call.
+    fn is_ignored_app_active(&self) -> bool {
+        if self.config.ignore_apps.is_empty() {
+            return false;
+        }
+        let running = running_process_names();
+        for ignored in &self.config.ignore_apps {
+            let ignored_lower = ignored.to_lowercase();
+            if running
+                .iter()
+                .any(|p| p.to_lowercase().contains(&ignored_lower))
+            {
+                eprintln!("[call-detect] ignored app active: {}", ignored);
+                return true;
+            }
+        }
+        false
+    }
 }
 
 /// Friendly display name for a process name.
 fn display_name_for(process: &str) -> String {
     match process {
+        // Bundle IDs
+        "us.zoom.xos" => "Zoom".into(),
+        "com.microsoft.teams2" | "com.microsoft.teams" => "Teams".into(),
+        "com.apple.FaceTime" => "FaceTime".into(),
+        "com.cisco.webexmeetingsapp" => "Webex".into(),
+        "com.tinyspeck.slackmacgap" | "com.slack.Slack" => "Slack".into(),
+        // Process names (backward compat)
         "zoom.us" => "Zoom".into(),
         "Microsoft Teams" | "Microsoft Teams (work or school)" | "MSTeams" => "Teams".into(),
         "FaceTime" => "FaceTime".into(),
@@ -261,6 +413,19 @@ fn display_name_for(process: &str) -> String {
         "Slack" => "Slack".into(),
         other => other.into(),
     }
+}
+
+/// Check if a config entry refers to a Teams app (bundle ID or process name).
+fn is_teams_app(app: &str) -> bool {
+    matches!(
+        app,
+        "com.microsoft.teams2"
+            | "com.microsoft.teams"
+            | "Microsoft Teams"
+            | "Microsoft Teams (work or school)"
+            | "MSTeams"
+            | "Teams"
+    )
 }
 
 // ── Meeting window detection ────────────────────────────────
@@ -338,6 +503,35 @@ end tell"#
 
 // ── macOS-specific detection ──────────────────────────────────
 
+/// Get bundle IDs of all running apps via `lsappinfo`. Fast (~5ms).
+/// More reliable than process name matching for app identification.
+fn running_bundle_ids() -> Vec<String> {
+    let output = std::process::Command::new("lsappinfo")
+        .args(["list"])
+        .output();
+
+    match output {
+        Ok(out) if out.status.success() => {
+            let text = String::from_utf8_lossy(&out.stdout);
+            text.lines()
+                .filter_map(|line| {
+                    let trimmed = line.trim();
+                    if trimmed.starts_with("bundleID=") && !trimmed.contains("NULL") {
+                        // Extract bundle ID from: bundleID="com.example.app"
+                        trimmed
+                            .strip_prefix("bundleID=\"")
+                            .and_then(|s| s.strip_suffix('"'))
+                            .map(|s| s.to_string())
+                    } else {
+                        None
+                    }
+                })
+                .collect()
+        }
+        _ => Vec::new(),
+    }
+}
+
 /// Get list of running process names via `ps`. Fast (~2ms), no permissions
 /// needed, no osascript overhead.
 fn running_process_names() -> Vec<String> {
@@ -408,6 +602,21 @@ print(r > 0 ? "1" : "0")
     }
 }
 
+/// Find the pre-compiled mic_monitor binary (event-driven mic listener).
+fn find_mic_monitor_binary() -> Option<std::path::PathBuf> {
+    if let Ok(exe) = std::env::current_exe() {
+        let beside_exe = exe.parent().unwrap_or(exe.as_ref()).join("mic_monitor");
+        if beside_exe.exists() {
+            return Some(beside_exe);
+        }
+    }
+    let dev_path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("bin/mic_monitor");
+    if dev_path.exists() {
+        return Some(dev_path);
+    }
+    None
+}
+
 /// Find the pre-compiled mic_check binary.
 /// Checks next to the app binary first, then the source tree location.
 fn find_mic_check_binary() -> Option<std::path::PathBuf> {
@@ -428,6 +637,76 @@ fn find_mic_check_binary() -> Option<std::path::PathBuf> {
     None
 }
 
+/// Extract the current meeting title from Microsoft Teams via AppleScript.
+///
+/// Teams window titles follow the pattern: `{Tab/Meeting} | {Section} | Microsoft Teams`.
+/// Non-meeting windows have known tab names (Calendar, Chat, Activity, etc.) as the
+/// first segment. Meeting windows have the meeting subject as the first segment.
+/// Returns the meeting subject, or None if no meeting window is found.
+pub fn get_teams_meeting_title() -> Option<String> {
+    let script = r#"tell application "System Events"
+    set teamNames to {"MSTeams", "Microsoft Teams"}
+    repeat with t in teamNames
+        if exists process t then
+            tell process t
+                set windowNames to name of every window
+                repeat with wn in windowNames
+                    set wn to contents of wn
+                    set AppleScript's text item delimiters to " | "
+                    set parts to text items of wn
+                    set AppleScript's text item delimiters to ""
+                    if (count of parts) ≥ 2 then
+                        set lastPart to item (count of parts) of parts
+                        set firstPart to item 1 of parts
+                        if lastPart is "Microsoft Teams" then
+                            set knownTabs to {"Calendar", "Chat", "Activity", "Teams", "Calls", "Files", "Apps", "Help", "Settings", "Search", "Notifications"}
+                            set isMeeting to true
+                            repeat with tab in knownTabs
+                                if firstPart is (contents of tab) then
+                                    set isMeeting to false
+                                    exit repeat
+                                end if
+                            end repeat
+                            if isMeeting then return firstPart
+                        end if
+                    end if
+                end repeat
+            end tell
+            exit repeat
+        end if
+    end repeat
+    return ""
+end tell"#;
+
+    let output = std::process::Command::new("osascript")
+        .arg("-e")
+        .arg(script)
+        .output();
+
+    match output {
+        Ok(out) if out.status.success() => {
+            let title = String::from_utf8_lossy(&out.stdout).trim().to_string();
+            if title.is_empty() {
+                None
+            } else {
+                eprintln!("[call-detect] extracted Teams meeting title: {:?}", title);
+                Some(title)
+            }
+        }
+        Ok(out) => {
+            eprintln!(
+                "[call-detect] Teams title extraction failed: {}",
+                String::from_utf8_lossy(&out.stderr).trim()
+            );
+            None
+        }
+        Err(e) => {
+            eprintln!("[call-detect] Teams title extraction error: {}", e);
+            None
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -439,6 +718,7 @@ mod tests {
             poll_interval_secs: 1,
             cooldown_minutes: 5,
             apps: vec!["zoom.us".into()],
+            ignore_apps: vec![],
         });
 
         assert!(!detector.in_cooldown("zoom.us"));
@@ -454,6 +734,7 @@ mod tests {
             poll_interval_secs: 1,
             cooldown_minutes: 5,
             apps: vec!["zoom.us".into()],
+            ignore_apps: vec![],
         });
 
         detector.set_cooldown("zoom.us");

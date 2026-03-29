@@ -145,6 +145,8 @@ pub struct CallDetectionConfig {
     pub poll_interval_secs: u64,
     pub cooldown_minutes: u64,
     pub apps: Vec<String>,
+    /// Apps whose mic usage should NOT trigger call detection (e.g., dictation tools).
+    pub ignore_apps: Vec<String>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -271,12 +273,23 @@ impl Default for CallDetectionConfig {
             poll_interval_secs: 3,
             cooldown_minutes: 5,
             apps: vec![
+                // Bundle IDs (preferred — reliable, version-independent)
+                "us.zoom.xos".into(),
+                "com.microsoft.teams2".into(),
+                "com.apple.FaceTime".into(),
+                "com.cisco.webexmeetingsapp".into(),
+                "com.slack.Slack".into(),
+                // Process names (fallback for older configs)
                 "zoom.us".into(),
                 "Microsoft Teams".into(),
                 "MSTeams".into(),
                 "FaceTime".into(),
                 "Webex".into(),
                 "Slack".into(),
+            ],
+            ignore_apps: vec![
+                "Wispr Flow".into(),
+                "wispr".into(),
             ],
         }
     }
