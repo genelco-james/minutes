@@ -163,7 +163,7 @@ export default function App() {
         </div>
       );
     }
-    const title = (detail.title as string) || selectedMeeting.split("/").pop()?.replace(/\.md$/, "") || "Meeting";
+    const title = selectedMeeting.split("/").pop()?.replace(/\.md$/, "") || (detail.title as string) || "Meeting";
     const date = (detail.date as string) || "";
     const duration = (detail.duration as string) || "";
     const attendees = Array.isArray(detail.attendees) ? detail.attendees as string[] : [];
@@ -295,7 +295,7 @@ export default function App() {
                   onMouseOver={(e) => { (e.currentTarget as HTMLElement).style.borderColor = "#333335"; (e.currentTarget as HTMLElement).style.background = "#2e2e30"; }}
                   onMouseOut={(e) => { (e.currentTarget as HTMLElement).style.borderColor = "#2a2a2c"; (e.currentTarget as HTMLElement).style.background = "transparent"; }}
                 >
-                  <div style={styles.cardTitle}>{m.title}</div>
+                  <div style={styles.cardTitle}>{m.path.split("/").pop()?.replace(/\.md$/, "") || m.title}</div>
                   <div style={styles.cardMeta}>
                     {m.duration}
                     {(m.attendees?.length || 0) > 0 && <span> · {m.attendees.length} people</span>}
