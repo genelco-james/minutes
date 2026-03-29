@@ -299,21 +299,16 @@ impl CallDetector {
                     initial_window_count = None;
 
                     // Detection strategy:
-                    // 1. If mic is active: check running apps (original approach)
-                    // 2. If mic is off: still check for Teams meeting windows
-                    //    (user may be muted when joining)
+                    // 1. If mic is active: check running apps via bundle ID / process name
+                    // 2. If mic is off: check if Teams has 2+ windows (meeting joined while muted)
                     let detection = if mic_active {
-                        let result = self.detect_active_call(true);
-                        if result.is_none() && tick % 10 == 0 {
-                            dlog!("[call-detect] mic ON but no matching app found in config");
-                        }
-                        result
+                        self.detect_active_call(true)
                     } else {
-                        // Mic-off fallback: check Teams meeting window directly.
-                        // Catches meetings where user joins muted.
-                        let title = get_teams_meeting_title();
-                        if title.is_some() {
-                            dlog!("[call-detect] mic off but Teams meeting window found: {:?}", title);
+                        // Mic-off fallback: check if Teams has a meeting window open
+                        // (user joined meeting while muted)
+                        let wc = get_window_count("Teams");
+                        if wc >= 2 {
+                            dlog!("[call-detect] mic off but Teams has {} windows — meeting detected", wc);
                             Some(("Teams".to_string(), "com.microsoft.teams2".to_string()))
                         } else {
                             None
@@ -325,15 +320,17 @@ impl CallDetector {
                         if !self.in_cooldown(&process_name) {
                             let is_teams = is_teams_app(&process_name);
 
-                            // For Teams: verify an actual meeting is happening.
-                            // Check window count (doesn't need Accessibility permission).
-                            // If window count is still at baseline (1), it's a false positive.
-                            if is_teams && !mic_active {
+                            // For Teams: verify an actual meeting is happening by
+                            // checking window count. Teams always has 1 window (chat/calendar).
+                            // During a meeting it has 2+. This prevents false positives when
+                            // mic is active from dictation/Wispr Flow while Teams idles.
+                            if is_teams {
                                 let wc = get_window_count(&process_name);
                                 if wc <= 1 {
-                                    dlog!("[call-detect] Teams has {} window(s), mic off — skipping", wc);
+                                    dlog!("[call-detect] Teams has {} window(s) — not in meeting, skipping", wc);
                                     continue;
                                 }
+                                dlog!("[call-detect] Teams has {} windows — meeting confirmed", wc);
                             }
 
                             // Try to extract meeting title (best-effort, may fail without Accessibility perms)
