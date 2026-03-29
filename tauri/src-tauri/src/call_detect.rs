@@ -91,8 +91,8 @@ impl CallDetector {
         }
 
         std::thread::spawn(move || {
-            // Initial delay to let the app finish launching
-            std::thread::sleep(Duration::from_secs(5));
+            // Brief delay to let the app finish launching
+            std::thread::sleep(Duration::from_secs(2));
 
             // Counter for mic-silence fallback (used for apps without window detection)
             let mut silence_miss_count: u32 = 0;
@@ -154,8 +154,19 @@ impl CallDetector {
 
             let event_driven = has_monitor;
 
+            // Force an immediate first check — don't wait for a mic state CHANGE.
+            // If the mic is already active (user joined meeting before app started),
+            // we need to detect right away.
+            if mic_active {
+                eprintln!("[call-detect] mic already active at startup — running immediate detection");
+            }
+            let mut first_iteration = true;
+
             loop {
-                if event_driven {
+                if first_iteration {
+                    // Skip the blocking wait on first iteration — use current mic state
+                    first_iteration = false;
+                } else if event_driven {
                     // Event-driven: wait for mic events or timeout for periodic checks
                     match mic_rx.recv_timeout(interval) {
                         Ok(state) => {
