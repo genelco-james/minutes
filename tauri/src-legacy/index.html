@@ -1,0 +1,4698 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Minutes</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    :root {
+      --bg: #1c1c1e;
+      --bg-elevated: #2c2c2e;
+      --bg-hover: #38383a;
+      --border: #38383a;
+      --text: #f5f5f7;
+      --text-secondary: #86868b;
+      --text-tertiary: #636366;
+      --accent: #5b8fd9;
+      --accent-hover: #7ba6e3;
+      --red: #d9655f;
+      --red-bg: rgba(217, 101, 95, 0.12);
+      --green: #5cb88a;
+      --live: #34c759;
+      --purple: #a78bca;
+      --radius: 10px;
+      --font-sans: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue', sans-serif;
+      --font-display: ui-serif, 'Iowan Old Style', 'Palatino Linotype', 'Book Antiqua', Georgia, serif;
+      --font-mono: 'SF Mono', 'Menlo', monospace;
+    }
+
+    :focus-visible {
+      outline: 2px solid var(--accent);
+      outline-offset: 2px;
+    }
+
+    body {
+      font-family: var(--font-sans);
+      background: var(--bg);
+      color: var(--text);
+      height: 100vh;
+      display: flex;
+      flex-direction: row;
+      overflow: hidden;
+      -webkit-user-select: none;
+      user-select: none;
+    }
+
+    /* Subtle grain overlay for depth — barely perceptible, adds warmth to flat surfaces */
+    body::after {
+      content: '';
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      z-index: 9999;
+      opacity: 0.020;
+      background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+      background-repeat: repeat;
+      background-size: 256px;
+    }
+
+    /* ── Split layout ── */
+    .app-left {
+      flex: 1;
+      min-width: 0;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    /* ── Recall panel (right side) ── */
+    .recall-panel {
+      width: 0;
+      min-width: 0;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      border-left: 1px solid rgba(255,255,255,0.04);
+      background: var(--bg);
+      opacity: 0;
+      transition: opacity 100ms ease-out;
+    }
+
+    .recall-panel.expanded {
+      width: 50%;
+      opacity: 1;
+      transition: opacity 100ms ease-out 150ms;
+    }
+
+    .recall-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 10px 16px;
+      border-bottom: 1px solid rgba(255,255,255,0.04);
+      flex-shrink: 0;
+      -webkit-app-region: drag;
+    }
+
+    .recall-header-info {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      min-width: 0;
+    }
+
+    .recall-phase-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      flex-shrink: 0;
+      background: var(--text-secondary);
+    }
+
+    .recall-phase-dot.prep { background: var(--accent); }
+    .recall-phase-dot.listening {
+      background: var(--red);
+      animation: recording-glow 1.8s ease-in-out infinite;
+    }
+    .recall-phase-dot.debrief { background: var(--green); }
+
+    .recall-phase-label {
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--text-secondary);
+      white-space: nowrap;
+    }
+
+    .recall-phase-label.prep { color: var(--accent); }
+    .recall-phase-label.listening { color: var(--red); }
+    .recall-phase-label.debrief { color: var(--green); }
+
+    .recall-context-label {
+      font-size: 12px;
+      color: var(--text-tertiary);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .recall-header-actions {
+      display: flex;
+      gap: 8px;
+      -webkit-app-region: no-drag;
+      flex-shrink: 0;
+    }
+
+    .recall-close {
+      padding: 2px 8px;
+      border-radius: 6px;
+      border: none;
+      background: transparent;
+      color: var(--text-tertiary);
+      font-size: 14px;
+      cursor: pointer;
+      line-height: 1;
+    }
+
+    .recall-close:hover { color: var(--text-secondary); background: var(--bg-hover); }
+
+    .recall-terminal {
+      flex: 1;
+      overflow: hidden;
+      padding: 4px;
+      background: #1c1c1e;
+    }
+
+
+    .recall-terminal.dimmed {
+      opacity: 0.5;
+      transition: opacity 200ms ease;
+    }
+
+    /* Quick note inside recall panel during recording */
+    .recall-note {
+      display: none;
+      padding: 8px 12px;
+      border-bottom: 1px solid var(--border);
+      flex-shrink: 0;
+    }
+
+    .recall-note.active { display: block; }
+
+    .recall-note-row {
+      display: flex;
+      gap: 8px;
+    }
+
+    .recall-note-row input {
+      flex: 1;
+      padding: 6px 10px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: var(--bg-elevated);
+      color: var(--text);
+      font-family: inherit;
+      font-size: 12px;
+      outline: none;
+      -webkit-user-select: text;
+      user-select: text;
+    }
+
+    .recall-note-row input:focus {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px rgba(91, 143, 217, 0.12);
+    }
+
+    .recall-note-row input::placeholder { color: var(--text-tertiary); }
+
+    /* Loading / error states */
+    .recall-status {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex: 1;
+      flex-direction: column;
+      gap: 12px;
+      color: var(--text-secondary);
+      font-size: 13px;
+    }
+
+    .recall-status .processing-spinner {
+      width: 18px;
+      height: 18px;
+    }
+
+    .recall-exit-banner {
+      display: none;
+      padding: 10px 16px;
+      border-top: 1px solid var(--border);
+      background: var(--bg-elevated);
+      text-align: center;
+      font-size: 12px;
+      color: var(--text-secondary);
+      flex-shrink: 0;
+    }
+
+    .recall-exit-banner.active { display: flex; align-items: center; justify-content: center; gap: 12px; }
+
+    /* Lifecycle badges on meeting items */
+    .meeting-badges {
+      display: flex;
+      gap: 4px;
+      margin-top: 4px;
+    }
+
+    .lifecycle-badge {
+      font-size: 9px;
+      font-weight: 500;
+      padding: 1px 6px;
+      border-radius: 999px;
+      letter-spacing: 0;
+      text-transform: lowercase;
+    }
+
+    .lifecycle-badge.prepped {
+      background: rgba(91, 143, 217, 0.12);
+      color: var(--accent);
+    }
+
+    .lifecycle-badge.recorded {
+      background: var(--bg-elevated);
+      color: var(--text-secondary);
+    }
+
+    .lifecycle-badge.debriefed {
+      background: rgba(92, 184, 138, 0.12);
+      color: var(--green);
+    }
+
+    /* Pulsing nudge indicator on the Recall button */
+    .recall-nudge {
+      display: none;
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--accent);
+      animation: nudge-pulse 2s ease-in-out infinite;
+    }
+
+    .recall-nudge.active { display: inline-block; }
+
+    @keyframes nudge-pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.4; }
+    }
+
+    /* ── Header ── */
+    .header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 10px 16px;
+      -webkit-app-region: drag;
+      position: relative;
+      z-index: 10;
+    }
+
+    .header::after {
+      content: '';
+      position: absolute;
+      bottom: -6px;
+      left: 0;
+      right: 0;
+      height: 6px;
+      background: linear-gradient(rgba(28, 28, 30, 0.6), transparent);
+      pointer-events: none;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      min-width: 0;
+    }
+
+    .brand-mark {
+      width: 30px;
+      height: 30px;
+      border-radius: 10px;
+      background:
+        radial-gradient(circle at 28% 25%, rgba(56, 189, 248, 0.55), transparent 45%),
+        radial-gradient(circle at 74% 76%, rgba(251, 191, 36, 0.4), transparent 40%),
+        linear-gradient(155deg, #173b5c 0%, #1d2c4a 100%);
+      box-shadow:
+        inset 0 1px 0 rgba(255,255,255,0.16),
+        0 8px 20px rgba(0,0,0,0.18);
+      position: relative;
+      flex-shrink: 0;
+    }
+
+    .brand-mark::before,
+    .brand-mark::after {
+      content: "";
+      position: absolute;
+      top: 7px;
+      width: 7px;
+      height: 16px;
+      border-radius: 3px;
+      background: rgba(248, 250, 252, 0.92);
+      box-shadow: 0 0 0 1px rgba(255,255,255,0.08);
+    }
+
+    .brand-mark::before { left: 7px; }
+    .brand-mark::after { right: 7px; }
+
+    .brand-copy {
+      min-width: 0;
+    }
+
+    .brand-label {
+      font-size: 18px;
+      font-family: var(--font-display);
+      font-weight: 700;
+      letter-spacing: -0.3px;
+      color: var(--text);
+      line-height: 1;
+    }
+
+    .brand-sub {
+      display: none;
+    }
+
+    .header-actions {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      -webkit-app-region: no-drag;
+    }
+
+    .header-chip {
+      display: none;
+      align-items: center;
+      gap: 4px;
+      padding: 3px 8px;
+      border-radius: 999px;
+      background: rgba(255, 159, 10, 0.08);
+      color: #ff9f0a;
+      font-size: 10px;
+      font-weight: 600;
+      letter-spacing: 0.2px;
+      cursor: pointer;
+    }
+
+    .header-chip.active { display: inline-flex; }
+
+    .header-chip.readiness {
+      display: none;
+    }
+
+    .header-chip.dictation-shortcut {
+      background: rgba(91, 143, 217, 0.10);
+      color: var(--accent);
+    }
+
+    .status-pill {
+      font-size: 0;
+      font-weight: 600;
+      padding: 0;
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--text-tertiary);
+      opacity: 0.3;
+      -webkit-app-region: no-drag;
+      transition: all 0.2s ease;
+    }
+
+    .status-pill.recording {
+      font-size: 11px;
+      padding: 3px 10px;
+      width: auto;
+      height: auto;
+      border-radius: 12px;
+      opacity: 1;
+      background: var(--red-bg);
+      color: var(--red);
+    }
+
+    .status-pill.processing {
+      font-size: 11px;
+      padding: 3px 10px;
+      width: auto;
+      height: auto;
+      border-radius: 12px;
+      opacity: 1;
+      background: rgba(91, 143, 217, 0.12);
+      color: var(--accent);
+    }
+
+    .status-pill.live {
+      font-size: 11px;
+      padding: 3px 10px;
+      width: auto;
+      height: auto;
+      border-radius: 12px;
+      opacity: 1;
+      background: rgba(52, 199, 89, 0.15);
+      color: var(--live);
+    }
+
+    /* ── Live transcript bar ── */
+    .live-bar {
+      display: none;
+      padding: 12px 16px;
+      background: rgba(52, 199, 89, 0.06);
+      border-bottom: 1px solid rgba(52, 199, 89, 0.12);
+    }
+    .live-bar.active { display: block; }
+    @media (prefers-reduced-motion: reduce) {
+      .live-dot { animation: none; }
+    }
+    .live-bar .top-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+    }
+    .live-indicator {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--live);
+      letter-spacing: 0.3px;
+      text-transform: uppercase;
+    }
+    .live-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 2px;
+      background: var(--live);
+      animation: live-pulse 2s ease-in-out infinite;
+      /* Rounded square shape distinguishes from recording's circle for colorblind users */
+    }
+    @keyframes live-pulse {
+      0%, 100% { opacity: 1; box-shadow: 0 0 0 0 rgba(52, 199, 89, 0.4); }
+      50% { opacity: 0.7; box-shadow: 0 0 6px 2px rgba(52, 199, 89, 0.3); }
+    }
+    .live-time {
+      font-size: 20px;
+      font-variant-numeric: tabular-nums;
+      color: var(--text);
+      font-family: var(--font-mono);
+      font-weight: 500;
+      letter-spacing: 0.5px;
+    }
+    .live-utterances {
+      font-size: 11px;
+      color: var(--text-secondary);
+      margin-top: 2px;
+    }
+    .live-level {
+      height: 3px;
+      margin: 6px 0 8px;
+      background: rgba(255,255,255,0.06);
+      border-radius: 2px;
+      overflow: hidden;
+    }
+    .live-level-fill {
+      height: 100%;
+      background: var(--live);
+      opacity: 0.6;
+      border-radius: 2px;
+      transition: width 0.15s ease-out;
+      width: 0%;
+    }
+    .live-actions {
+      margin-top: 8px;
+      display: flex;
+      gap: 8px;
+    }
+
+    /* ── Recording bar ── */
+    .recording-bar {
+      display: none;
+      padding: 12px 16px;
+      background: var(--red-bg);
+      border-bottom: 1px solid rgba(217, 101, 95, 0.12);
+      animation: recording-pulse 2.5s ease-in-out infinite;
+      box-shadow: inset 0 -1px 0 rgba(217, 101, 95, 0.08), 0 4px 20px rgba(217, 101, 95, 0.04);
+    }
+
+    .recording-bar.active { display: block; }
+
+    @keyframes recording-pulse {
+      0%, 100% { background: var(--red-bg); }
+      50% { background: rgba(217, 101, 95, 0.15); }
+    }
+
+    .recording-bar .top-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 8px;
+    }
+
+    .recording-indicator {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--red);
+      letter-spacing: 0.3px;
+      text-transform: uppercase;
+    }
+
+    .recording-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--red);
+      animation: recording-glow 1.8s ease-in-out infinite;
+      box-shadow: 0 0 0 0 rgba(217, 101, 95, 0.4);
+    }
+
+    @keyframes blink { 50% { opacity: 0; } }
+
+    @keyframes recording-glow {
+      0%, 100% { opacity: 1; box-shadow: 0 0 0 0 rgba(217, 101, 95, 0.4); }
+      50% { opacity: 0.4; box-shadow: 0 0 8px 2px rgba(217, 101, 95, 0.15); }
+    }
+
+    .recording-time {
+      font-size: 20px;
+      font-variant-numeric: tabular-nums;
+      color: var(--text);
+      font-family: var(--font-mono);
+      font-weight: 500;
+      letter-spacing: 0.5px;
+    }
+
+    /* ── Audio visualizer ── */
+    .audio-viz {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 1.5px;
+      height: 32px;
+      margin: 8px 0 10px;
+      -webkit-mask-image: linear-gradient(to right, transparent, black 10%, black 90%, transparent);
+      mask-image: linear-gradient(to right, transparent, black 10%, black 90%, transparent);
+    }
+
+    .audio-viz .bar {
+      width: 2px;
+      border-radius: 999px;
+      background: var(--red);
+      opacity: 0.5;
+      min-height: 2px;
+      transition: height 0.12s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+
+    .recording-actions {
+      display: flex;
+      gap: 8px;
+    }
+
+    .recording-actions .btn {
+      flex: 1;
+    }
+
+    /* ── Processing bar ── */
+    .processing-bar {
+      display: none;
+      padding: 12px 16px;
+      background: rgba(91, 143, 217, 0.08);
+      border-bottom: 1px solid rgba(91, 143, 217, 0.12);
+    }
+
+    .processing-bar.active { display: block; }
+
+    .processing-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .processing-spinner {
+      width: 14px;
+      height: 14px;
+      border: 2px solid rgba(91, 143, 217, 0.18);
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      animation: processing-spin 0.8s linear infinite;
+      flex-shrink: 0;
+    }
+
+    @keyframes processing-spin {
+      to { transform: rotate(360deg); }
+    }
+
+    .processing-copy {
+      min-width: 0;
+      flex: 1;
+    }
+
+    .processing-title {
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--accent);
+      font-family: var(--font-display);
+    }
+
+    .processing-stage {
+      font-size: 12px;
+      color: var(--text-secondary);
+      margin-top: 2px;
+    }
+    .processing-elapsed {
+      font-size: 11px;
+      color: var(--text-tertiary, #888);
+      margin-top: 1px;
+      font-variant-numeric: tabular-nums;
+    }
+
+    /* ── Output notice ── */
+    .output-notice {
+      display: none;
+      padding: 12px 16px;
+      background: rgba(92, 184, 138, 0.08);
+      border-bottom: 1px solid rgba(92, 184, 138, 0.12);
+    }
+
+    .output-notice.active { display: block; }
+
+    .output-notice.capture {
+      background: rgba(255, 159, 10, 0.08);
+      border-bottom-color: rgba(255, 159, 10, 0.16);
+    }
+
+    .output-notice-row {
+      display: flex;
+      align-items: flex-start;
+      gap: 12px;
+    }
+
+    .output-notice-icon {
+      width: 28px;
+      height: 28px;
+      border-radius: 999px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 14px;
+      flex-shrink: 0;
+      background: rgba(92, 184, 138, 0.16);
+      color: var(--green);
+    }
+
+    .output-notice.capture .output-notice-icon {
+      background: rgba(255, 159, 10, 0.16);
+      color: #ff9f0a;
+    }
+
+    .output-notice-copy {
+      min-width: 0;
+      flex: 1;
+    }
+
+    .output-notice-title {
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--text);
+    }
+
+    .output-notice-detail {
+      font-size: 12px;
+      color: var(--text-secondary);
+      margin-top: 3px;
+      line-height: 1.45;
+    }
+
+    .output-notice-path {
+      font-size: 11px;
+      color: var(--text-tertiary);
+      margin-top: 6px;
+      font-family: var(--font-mono);
+      word-break: break-all;
+    }
+
+    .output-notice-actions {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin-top: 10px;
+    }
+
+    /* ── Quick note inline ── */
+    .quick-note {
+      display: none;
+      padding: 0 16px 12px;
+    }
+
+    .quick-note.active { display: block; }
+
+    .quick-note-row {
+      display: flex;
+      gap: 8px;
+    }
+
+    .quick-note-row input {
+      flex: 1;
+      padding: 7px 12px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: var(--bg-elevated);
+      color: var(--text);
+      font-family: inherit;
+      font-size: 13px;
+      outline: none;
+      -webkit-user-select: text;
+      user-select: text;
+    }
+
+    .quick-note-row input:focus {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px rgba(91, 143, 217, 0.12);
+    }
+
+    .quick-note-row input::placeholder { color: var(--text-tertiary); }
+
+    /* ── Search ── */
+    .search-wrap {
+      padding: 0 16px 12px;
+    }
+
+    .search-box {
+      width: 100%;
+      padding: 9px 12px 9px 34px;
+      border: 1px solid rgba(255,255,255,0.06);
+      border-radius: var(--radius);
+      background: rgba(255,255,255,0.03);
+      color: var(--text);
+      font-family: inherit;
+      font-size: 13px;
+      outline: none;
+      -webkit-user-select: text;
+      user-select: text;
+    }
+
+    .search-box:focus {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px rgba(91, 143, 217, 0.12);
+    }
+
+    .search-box::placeholder { color: var(--text-tertiary); }
+
+    .search-icon {
+      position: relative;
+    }
+
+    .search-icon::before {
+      content: "⌕";
+      position: absolute;
+      left: 28px;
+      top: 9px;
+      font-size: 16px;
+      color: var(--text-tertiary);
+      pointer-events: none;
+      z-index: 1;
+    }
+
+    /* ── Meeting list ── */
+    .meetings-scroll {
+      flex: 1;
+      overflow-y: auto;
+      padding: 0 16px;
+    }
+
+    .meetings-scroll::-webkit-scrollbar { width: 5px; }
+    .meetings-scroll::-webkit-scrollbar-track { background: transparent; }
+    .meetings-scroll::-webkit-scrollbar-thumb {
+      background: rgba(255,255,255,0.08);
+      border-radius: 999px;
+    }
+    .meetings-scroll::-webkit-scrollbar-thumb:hover {
+      background: rgba(255,255,255,0.14);
+    }
+
+    .date-group {
+      font-size: 13px;
+      font-family: var(--font-display);
+      font-weight: 600;
+      text-transform: none;
+      letter-spacing: -0.1px;
+      color: var(--text-secondary);
+      padding: 20px 4px 8px;
+      border-bottom: 1px solid rgba(255,255,255,0.04);
+      margin-bottom: 4px;
+    }
+
+    .date-group:first-child { padding-top: 8px; }
+
+    /* ── Staggered entrance ── */
+    @keyframes list-enter {
+      from { opacity: 0; transform: translateY(6px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    .meeting-item, .date-group {
+      animation: list-enter 0.25s ease-out both;
+    }
+
+    .meetings-scroll > :nth-child(1) { animation-delay: 0ms; }
+    .meetings-scroll > :nth-child(2) { animation-delay: 30ms; }
+    .meetings-scroll > :nth-child(3) { animation-delay: 55ms; }
+    .meetings-scroll > :nth-child(4) { animation-delay: 75ms; }
+    .meetings-scroll > :nth-child(5) { animation-delay: 95ms; }
+    .meetings-scroll > :nth-child(6) { animation-delay: 110ms; }
+    .meetings-scroll > :nth-child(7) { animation-delay: 125ms; }
+    .meetings-scroll > :nth-child(8) { animation-delay: 140ms; }
+    .meetings-scroll > :nth-child(9) { animation-delay: 155ms; }
+    .meetings-scroll > :nth-child(10) { animation-delay: 170ms; }
+    .meetings-scroll > :nth-child(n+11) { animation-delay: 185ms; }
+
+    .meeting-item {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      position: relative;
+      padding: 10px 12px 10px 16px;
+      border-radius: 10px;
+      cursor: pointer;
+      transition: background 0.15s ease;
+    }
+
+    .meeting-item:hover { background: var(--bg-hover); }
+    .meeting-item:active { background: rgba(255,255,255,0.08); }
+
+    .meeting-info { flex: 1; min-width: 0; }
+
+    .meeting-title {
+      font-size: 14px;
+      font-weight: 600;
+      color: var(--text);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .meeting-meta {
+      font-size: 11px;
+      font-family: var(--font-mono);
+      color: var(--text-tertiary);
+      margin-top: 3px;
+      letter-spacing: 0.2px;
+    }
+
+    .meeting-snippet {
+      font-size: 12px;
+      color: var(--text-secondary);
+      margin-top: 6px;
+      line-height: 1.45;
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+    }
+
+    .meeting-badge {
+      position: absolute;
+      left: 4px;
+      top: 10px;
+      bottom: 10px;
+      width: 3px;
+      height: auto;
+      border-radius: 999px;
+      padding: 0;
+      font-size: 0;
+      overflow: hidden;
+      margin: 0;
+      background: rgba(255,255,255,0.08);
+      transition: background 0.15s ease;
+    }
+
+    .meeting-item:hover .meeting-badge {
+      background: rgba(255,255,255,0.14);
+    }
+
+    .meeting-badge.memo {
+      background: rgba(167, 139, 202, 0.4);
+    }
+
+    .meeting-item:hover .meeting-badge.memo {
+      background: rgba(167, 139, 202, 0.6);
+    }
+
+    .meeting-badge.dictation {
+      background: rgba(121, 169, 255, 0.4);
+    }
+
+    .meeting-item:hover .meeting-badge.dictation {
+      background: rgba(121, 169, 255, 0.6);
+    }
+
+    /* ── Meeting detail view ── */
+    .detail-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(10, 10, 12, 0.68);
+      backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+      z-index: 120;
+    }
+
+    .detail-overlay.active { display: flex; }
+
+    .detail-card {
+      width: min(760px, 100%);
+      max-height: calc(100vh - 40px);
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 18px;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      box-shadow: 0 24px 60px rgba(0, 0, 0, 0.4);
+    }
+
+    .detail-header {
+      padding: 18px 20px 14px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 12px;
+    }
+
+    .detail-header-copy {
+      min-width: 0;
+      flex: 1;
+    }
+
+    .detail-title {
+      font-size: 18px;
+      font-family: var(--font-display);
+      font-weight: 700;
+      letter-spacing: -0.2px;
+      color: var(--text);
+      margin-bottom: 6px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .detail-meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      font-size: 12px;
+      color: var(--text-secondary);
+    }
+
+    .detail-meta-chip {
+      padding: 3px 8px;
+      border-radius: 999px;
+      background: var(--bg-elevated);
+      color: var(--text-secondary);
+    }
+
+    .detail-actions {
+      display: flex;
+      gap: 8px;
+      flex-shrink: 0;
+    }
+
+    .detail-scroll {
+      overflow-y: auto;
+      padding: 0 20px 20px;
+    }
+
+    .detail-context {
+      margin-top: 16px;
+      padding: 12px 14px;
+      border-radius: 12px;
+      background: var(--bg-elevated);
+      border: 1px solid var(--border);
+    }
+
+    .detail-context-label {
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.5px;
+      text-transform: uppercase;
+      color: var(--text-tertiary);
+      margin-bottom: 6px;
+    }
+
+    .detail-context-body {
+      font-size: 13px;
+      line-height: 1.5;
+      color: var(--text-secondary);
+      white-space: pre-wrap;
+    }
+
+    .detail-speakers {
+      margin-top: 16px;
+      padding: 12px 14px;
+      border-radius: 12px;
+      background: var(--bg-elevated);
+      border: 1px solid var(--border);
+    }
+
+    .detail-speakers-label {
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.5px;
+      text-transform: uppercase;
+      color: var(--text-tertiary);
+      margin-bottom: 8px;
+    }
+
+    .speaker-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 4px 0;
+      font-size: 13px;
+    }
+
+    .speaker-label {
+      color: var(--text-tertiary);
+      font-family: var(--font-mono, monospace);
+      font-size: 11px;
+      min-width: 80px;
+    }
+
+    .speaker-name {
+      color: var(--text-primary);
+      font-weight: 500;
+    }
+
+    .speaker-badge {
+      font-size: 10px;
+      padding: 1px 6px;
+      border-radius: 4px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.3px;
+    }
+
+    .speaker-badge.high {
+      background: rgba(52, 199, 89, 0.15);
+      color: var(--live);
+    }
+
+    .speaker-badge.medium {
+      background: rgba(255, 159, 10, 0.15);
+      color: #ff9f0a;
+    }
+
+    .speaker-badge.low {
+      background: rgba(142, 142, 147, 0.15);
+      color: #8e8e93;
+    }
+
+    .speaker-confirm-btn {
+      font-size: 11px;
+      padding: 2px 8px;
+      border-radius: 4px;
+      border: 1px solid var(--border);
+      background: transparent;
+      color: var(--text-secondary);
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+
+    .speaker-confirm-btn:hover {
+      background: var(--accent, #0a84ff);
+      color: white;
+      border-color: var(--accent, #0a84ff);
+    }
+
+    .detail-section {
+      padding-top: 18px;
+      border-top: 1px solid rgba(255, 255, 255, 0.04);
+      margin-top: 18px;
+    }
+
+    .detail-section:first-child {
+      border-top: none;
+      margin-top: 0;
+      padding-top: 18px;
+    }
+
+    .detail-section-title {
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 0.5px;
+      text-transform: uppercase;
+      color: var(--text-tertiary);
+      margin-bottom: 10px;
+    }
+
+    .detail-section-body {
+      font-size: 13px;
+      line-height: 1.55;
+      color: var(--text-secondary);
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    mark {
+      background: rgba(255, 214, 10, 0.3);
+      color: var(--text);
+      padding: 0 2px;
+      border-radius: 3px;
+      box-decoration-break: clone;
+      -webkit-box-decoration-break: clone;
+    }
+
+    .detail-empty {
+      padding: 28px 20px;
+      text-align: center;
+      color: var(--text-tertiary);
+      font-size: 12px;
+    }
+
+    .empty-state {
+      text-align: center;
+      padding: 48px 20px;
+      color: var(--text-tertiary);
+    }
+
+    .empty-state .icon { font-size: 40px; margin-bottom: 12px; opacity: 0.35; filter: grayscale(0.3); }
+    .empty-state .title { font-size: 15px; font-family: var(--font-display); font-weight: 600; color: var(--text-secondary); }
+    .empty-state .sub { font-size: 12px; margin-top: 6px; line-height: 1.5; }
+
+    /* ── About view ── */
+    .about-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(8, 10, 16, 0.66);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+      z-index: 130;
+    }
+
+    .about-overlay.active { display: flex; }
+
+    .about-card {
+      width: min(520px, 100%);
+      max-height: calc(100vh - 40px);
+      overflow-y: auto;
+      background: linear-gradient(180deg, rgba(22, 32, 50, 0.96), rgba(16, 24, 38, 0.96));
+      border: 1px solid rgba(255,255,255,0.08);
+      border-radius: 20px;
+      box-shadow: 0 24px 60px rgba(0,0,0,0.42);
+      padding: 22px 22px 20px;
+      color: var(--text);
+    }
+
+    .about-top {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 16px;
+    }
+
+    .about-brand {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      min-width: 0;
+    }
+
+    .about-copy h2 {
+      font-size: 24px;
+      font-family: var(--font-display);
+      line-height: 1;
+      letter-spacing: -0.4px;
+      margin-bottom: 6px;
+    }
+
+    .about-copy p {
+      font-size: 13px;
+      color: var(--text-secondary);
+      line-height: 1.45;
+    }
+
+    .about-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px;
+      margin-bottom: 16px;
+    }
+
+    .about-item {
+      padding: 12px 12px 11px;
+      border-radius: 14px;
+      background: rgba(255,255,255,0.04);
+      border: 1px solid rgba(255,255,255,0.06);
+    }
+
+    .about-item-title {
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.5px;
+      text-transform: uppercase;
+      color: var(--text-tertiary);
+      margin-bottom: 6px;
+    }
+
+    .about-item-body {
+      font-size: 13px;
+      color: var(--text-secondary);
+      line-height: 1.45;
+    }
+
+    .about-footer {
+      padding-top: 14px;
+      border-top: 1px solid rgba(255,255,255,0.06);
+      font-size: 12px;
+      color: var(--text-tertiary);
+      line-height: 1.45;
+    }
+
+    .about-controls {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin-top: 14px;
+      padding-top: 14px;
+      border-top: 1px solid rgba(255,255,255,0.06);
+    }
+
+    .about-controls-copy {
+      font-size: 12px;
+      color: var(--text-secondary);
+      line-height: 1.45;
+    }
+
+    .about-controls .toggle-btn {
+      width: auto !important;
+      min-width: 56px;
+      max-width: 72px;
+      flex-shrink: 0;
+    }
+
+    .shortcut-select {
+      width: 100%;
+      margin-top: 8px;
+      border-radius: 10px;
+      border: 1px solid var(--border);
+      background: var(--bg-elevated);
+      color: var(--text);
+      font: inherit;
+      font-size: 12px;
+      padding: 8px 10px;
+    }
+
+    .about-controls-group {
+      flex: 1;
+    }
+
+    .about-controls-meta {
+      margin-top: 8px;
+      font-size: 11px;
+      color: var(--text-tertiary);
+      line-height: 1.45;
+    }
+
+    .about-controls-meta.error {
+      color: #ff9f0a;
+    }
+
+    /* ── Readiness view ── */
+    .readiness-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(8, 10, 16, 0.66);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+      z-index: 128;
+    }
+
+    .readiness-overlay.active { display: flex; }
+
+    .readiness-card {
+      width: min(720px, 100%);
+      max-height: calc(100vh - 40px);
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 18px;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      box-shadow: 0 24px 60px rgba(0,0,0,0.4);
+    }
+
+    .readiness-header {
+      padding: 18px 20px 14px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 12px;
+    }
+
+    .readiness-title {
+      font-size: 18px;
+      font-family: var(--font-display);
+      font-weight: 700;
+      letter-spacing: -0.2px;
+      color: var(--text);
+      margin-bottom: 6px;
+    }
+
+    .readiness-sub {
+      font-size: 12px;
+      color: var(--text-secondary);
+      line-height: 1.45;
+    }
+
+    .readiness-scroll {
+      overflow-y: auto;
+      padding: 16px 20px 20px;
+    }
+
+    .readiness-list {
+      display: grid;
+      gap: 12px;
+    }
+
+    .readiness-item {
+      padding: 14px;
+      border-radius: 14px;
+      background: var(--bg-elevated);
+      border: 1px solid var(--border);
+    }
+
+    .readiness-item-top {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 8px;
+    }
+
+    .readiness-item-title {
+      font-size: 14px;
+      font-weight: 600;
+      color: var(--text);
+    }
+
+    .readiness-item-detail {
+      font-size: 12px;
+      color: var(--text-secondary);
+      line-height: 1.45;
+    }
+
+    .readiness-state {
+      padding: 3px 8px;
+      border-radius: 999px;
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 0.4px;
+      text-transform: uppercase;
+      flex-shrink: 0;
+      background: rgba(255,255,255,0.08);
+      color: var(--text-secondary);
+    }
+
+    .readiness-state.ready {
+      background: rgba(92, 184, 138, 0.12);
+      color: var(--green);
+    }
+
+    .readiness-state.attention {
+      background: rgba(255, 159, 10, 0.12);
+      color: #ff9f0a;
+    }
+
+    .readiness-state.unsupported {
+      background: rgba(255,255,255,0.06);
+      color: var(--text-secondary);
+    }
+
+    .readiness-optional {
+      font-size: 11px;
+      color: var(--text-tertiary);
+      margin-top: 8px;
+      letter-spacing: 0.15px;
+    }
+
+    /* ── Recovery view ── */
+    .recovery-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(8, 10, 16, 0.66);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+      z-index: 125;
+    }
+
+    .recovery-overlay.active { display: flex; }
+
+    .recovery-card {
+      width: min(760px, 100%);
+      max-height: calc(100vh - 40px);
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 18px;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      box-shadow: 0 24px 60px rgba(0,0,0,0.4);
+    }
+
+    .recovery-header {
+      padding: 18px 20px 14px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 12px;
+    }
+
+    .recovery-title {
+      font-size: 18px;
+      font-family: var(--font-display);
+      font-weight: 700;
+      letter-spacing: -0.2px;
+      color: var(--text);
+      margin-bottom: 6px;
+    }
+
+    .recovery-sub {
+      font-size: 12px;
+      color: var(--text-secondary);
+      line-height: 1.45;
+    }
+
+    .recovery-scroll {
+      overflow-y: auto;
+      padding: 16px 20px 20px;
+    }
+
+    .recovery-empty {
+      text-align: center;
+      color: var(--text-tertiary);
+      font-size: 12px;
+      padding: 28px 8px;
+    }
+
+    .recovery-list {
+      display: grid;
+      gap: 12px;
+    }
+
+    .recovery-item {
+      padding: 14px;
+      border-radius: 14px;
+      background: var(--bg-elevated);
+      border: 1px solid var(--border);
+    }
+
+    .recovery-item-top {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 8px;
+    }
+
+    .recovery-item-title {
+      font-size: 14px;
+      font-weight: 600;
+      color: var(--text);
+    }
+
+    .recovery-kind {
+      padding: 3px 8px;
+      border-radius: 999px;
+      background: rgba(255, 159, 10, 0.12);
+      color: #ff9f0a;
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 0.4px;
+      text-transform: uppercase;
+      flex-shrink: 0;
+    }
+
+    .recovery-item-detail {
+      font-size: 12px;
+      color: var(--text-secondary);
+      line-height: 1.45;
+    }
+
+    .recovery-item-path {
+      font-size: 11px;
+      color: var(--text-tertiary);
+      margin-top: 8px;
+      font-family: var(--font-mono);
+      word-break: break-all;
+    }
+
+    .recovery-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 10px;
+    }
+
+    /* ── Footer ── */
+    .footer {
+      padding: 8px 12px 12px;
+      border-top: none;
+    }
+
+    .footer-actions {
+      display: grid;
+      grid-template-columns: 1.35fr 1fr 1fr;
+      gap: 6px;
+      background: var(--bg-elevated);
+      border: 1px solid rgba(255,255,255,0.06);
+      border-radius: 14px;
+      padding: 6px;
+      box-shadow: 0 2px 12px rgba(0,0,0,0.12), 0 0 0 1px rgba(255,255,255,0.02);
+    }
+
+    .footer-actions .btn {
+      width: 100%;
+      border-radius: 10px;
+    }
+
+    /* ── Buttons ── */
+    .btn {
+      padding: 7px 14px;
+      border-radius: 8px;
+      border: none;
+      font-family: inherit;
+      font-size: 13px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all 0.15s ease;
+      -webkit-app-region: no-drag;
+    }
+
+    .btn-primary {
+      background: var(--accent);
+      color: #fff;
+      box-shadow: 0 1px 2px rgba(0,0,0,0.15);
+    }
+
+    .footer-actions .btn-primary {
+      width: 100%;
+    }
+
+    .btn-primary:hover { background: var(--accent-hover); box-shadow: 0 2px 4px rgba(0,0,0,0.2); }
+    .btn-primary:active { transform: scale(0.98); box-shadow: none; }
+
+    .btn-danger {
+      background: transparent;
+      color: var(--red);
+      border: 1px solid var(--red);
+      box-shadow: none;
+    }
+
+    .btn-danger:hover { background: rgba(217, 101, 95, 0.12); }
+    .btn-danger:active { transform: scale(0.98); }
+
+    .btn-secondary {
+      background: rgba(255,255,255,0.06);
+      color: var(--text);
+      border: 1px solid rgba(255,255,255,0.08);
+    }
+
+    .btn-secondary:hover { background: rgba(255,255,255,0.1); }
+
+    .btn-sm { padding: 5px 12px; font-size: 12px; }
+
+    .btn-icon {
+      padding: 4px 7px;
+      font-size: 15px;
+      line-height: 1;
+      border: none !important;
+      background: transparent !important;
+      color: var(--text-tertiary);
+      border-radius: 6px;
+    }
+    .btn-icon:hover { background: var(--bg-hover) !important; color: var(--text-secondary); }
+
+    /* ── Upcoming meeting ── */
+    .upcoming {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 10px 16px;
+      background: rgba(91, 143, 217, 0.06);
+      border-bottom: 1px solid rgba(91, 143, 217, 0.1);
+    }
+
+    .upcoming-icon { font-size: 16px; flex-shrink: 0; }
+
+    .upcoming-info { flex: 1; min-width: 0; }
+
+    .upcoming-title {
+      font-size: 12px;
+      font-weight: 500;
+      color: var(--text);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .upcoming-time {
+      font-size: 11px;
+      color: var(--accent);
+      font-weight: 500;
+    }
+
+    .upcoming .btn { flex-shrink: 0; }
+
+    /* ── Call detected banner ── */
+    .call-detected {
+      display: none;
+      align-items: center;
+      gap: 10px;
+      padding: 10px 16px;
+      background: rgba(92, 184, 138, 0.06);
+      border-bottom: 1px solid rgba(92, 184, 138, 0.1);
+    }
+    .call-detected.active { display: flex; }
+    .call-detected-icon { font-size: 16px; flex-shrink: 0; }
+    .call-detected-info { flex: 1; min-width: 0; }
+    .call-detected-title { font-size: 12px; font-weight: 500; color: var(--text); }
+    .call-detected-subtitle { font-size: 11px; color: var(--green); font-weight: 500; }
+  </style>
+</head>
+<body>
+  <div class="app-left">
+  <!-- Header -->
+  <div class="header">
+    <div class="brand">
+      <div class="brand-mark" aria-hidden="true"></div>
+      <div class="brand-copy">
+        <div class="brand-label">Minutes</div>
+        <div class="brand-sub">Conversation memory for humans and agents</div>
+      </div>
+    </div>
+    <div class="header-actions">
+      <button class="btn btn-icon" id="btn-settings" title="Settings (⌘,)">⚙</button>
+      <button class="header-chip dictation-shortcut" id="dictation-shortcut-chip">Dictate</button>
+      <button class="header-chip readiness" id="btn-readiness">Readiness</button>
+      <button class="header-chip" id="btn-recovery">Recovery <span id="recovery-count">0</span></button>
+      <span class="status-pill" id="status-pill">idle</span>
+    </div>
+  </div>
+
+  <!-- Recording bar (hidden when not recording) -->
+  <div class="recording-bar" id="recording-bar">
+    <div class="top-row">
+      <div class="recording-indicator">
+        <span class="recording-dot"></span>
+        <span id="recording-label">Recording</span>
+      </div>
+      <span class="recording-time" id="recording-time">0:00</span>
+    </div>
+    <div class="audio-viz" id="audio-viz"></div>
+    <div class="recording-actions">
+      <button class="btn btn-secondary btn-sm" id="btn-note-inline" title="Add a note">Add Note</button>
+      <button class="btn btn-danger btn-sm" id="btn-stop">Stop Recording</button>
+    </div>
+  </div>
+
+  <!-- Live transcript bar (hidden when not in live mode) -->
+  <div class="live-bar" id="live-bar" role="status" aria-live="polite">
+    <div class="top-row">
+      <div class="live-indicator">
+        <span class="live-dot" aria-hidden="true"></span>
+        <span>Live Transcript</span>
+      </div>
+      <span class="live-time" id="live-time">0:00</span>
+    </div>
+    <div class="live-level"><div class="live-level-fill" id="live-level-fill"></div></div>
+    <div class="live-utterances" id="live-utterances">0 utterances</div>
+    <div class="live-actions">
+      <button class="btn btn-secondary btn-sm" id="btn-stop-live">Stop Live</button>
+    </div>
+  </div>
+
+  <!-- Processing bar (hidden when not processing) -->
+  <div class="processing-bar" id="processing-bar">
+    <div class="processing-row">
+      <div class="processing-spinner" aria-hidden="true"></div>
+      <div class="processing-copy">
+        <div class="processing-title" id="processing-title">Processing recording</div>
+        <div class="processing-stage" id="processing-stage">Preparing transcript...</div>
+        <div class="processing-elapsed" id="processing-elapsed"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Output notice -->
+  <div class="output-notice" id="output-notice">
+    <div class="output-notice-row">
+      <div class="output-notice-icon" id="output-notice-icon">✓</div>
+      <div class="output-notice-copy">
+        <div class="output-notice-title" id="output-notice-title">Saved meeting</div>
+        <div class="output-notice-detail" id="output-notice-detail"></div>
+        <div class="output-notice-path" id="output-notice-path"></div>
+        <div class="output-notice-actions">
+          <button class="btn btn-secondary btn-sm" id="btn-open-output">Open</button>
+          <button class="btn btn-secondary btn-sm" id="btn-open-output-folder">Show in Folder</button>
+          <button class="btn btn-secondary btn-sm" id="btn-dismiss-output">Dismiss</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Quick note (shown when "Add Note" clicked during recording) -->
+  <div class="quick-note" id="quick-note">
+    <div class="quick-note-row">
+      <input type="text" id="note-inline-input" placeholder="Quick note..." />
+      <button class="btn btn-secondary btn-sm" id="btn-note-save">Save</button>
+    </div>
+  </div>
+
+  <!-- Search -->
+  <div class="search-wrap search-icon">
+    <input class="search-box" type="text" placeholder="Search meetings, memos, and dictations..." id="search-input" />
+  </div>
+
+  <!-- Upcoming meeting suggestion -->
+  <div class="upcoming" id="upcoming" style="display: none;">
+    <div class="upcoming-icon">📅</div>
+    <div class="upcoming-info">
+      <div class="upcoming-title" id="upcoming-title"></div>
+      <div class="upcoming-time" id="upcoming-time"></div>
+    </div>
+    <button class="btn btn-primary btn-sm" id="btn-record-upcoming">Record</button>
+  </div>
+
+  <!-- Call detected banner -->
+  <div class="call-detected" id="call-detected-banner">
+    <div class="call-detected-icon">📞</div>
+    <div class="call-detected-info">
+      <div class="call-detected-title" id="call-detected-title">Call detected</div>
+      <div class="call-detected-subtitle">Tap to start recording</div>
+    </div>
+    <button class="btn btn-primary btn-sm" id="btn-record-call">Record</button>
+    <button class="btn btn-secondary btn-sm" id="btn-dismiss-call">Dismiss</button>
+  </div>
+
+  <!-- Meeting list -->
+  <div class="meetings-scroll" id="meetings-scroll">
+    <div class="empty-state">
+      <div class="icon">⏳</div>
+      <div class="title">Loading...</div>
+    </div>
+  </div>
+
+  <!-- Footer -->
+  <div class="footer" id="footer">
+    <div class="footer-actions">
+      <button class="btn btn-primary" id="btn-record">Start Recording</button>
+      <button class="btn btn-secondary" id="btn-live" title="Start live transcription — ask your agent in Recall for coaching" aria-label="Start live transcription">Live</button>
+      <button class="btn btn-secondary" id="btn-quick-thought">Quick Thought</button>
+      <button class="btn btn-secondary" id="btn-assistant" aria-expanded="false">Recall <span class="recall-nudge" id="recall-nudge" aria-label="Recall has new content"></span></button>
+    </div>
+  </div>
+  </div><!-- end .app-left -->
+
+  <!-- ── Recall panel (right side, embedded terminal) ── -->
+  <div class="recall-panel" id="recall-panel">
+    <div class="recall-header">
+      <div class="recall-header-info">
+        <div class="recall-phase-dot" id="recall-dot" aria-label="Phase: Recall"></div>
+        <span class="recall-phase-label" id="recall-phase-label">Recall</span>
+        <span class="recall-context-label" id="recall-context-label"></span>
+      </div>
+      <div class="recall-header-actions">
+        <button class="btn btn-secondary btn-sm" id="btn-recall-end" style="display:none;">End Session</button>
+        <button class="recall-close" id="btn-recall-close" title="Close panel">&times;</button>
+      </div>
+    </div>
+    <div class="recall-note" id="recall-note">
+      <div class="recall-note-row">
+        <input type="text" id="recall-note-input" placeholder="Quick note..." />
+        <button class="btn btn-secondary btn-sm" id="btn-recall-note-save">Save</button>
+      </div>
+    </div>
+    <div class="recall-status" id="recall-loading" style="display:none;">
+      <div class="processing-spinner" aria-hidden="true"></div>
+      <span>Starting Recall...</span>
+    </div>
+    <div class="recall-terminal" id="recall-terminal-container"></div>
+    <div class="recall-exit-banner" id="recall-exit-banner">
+      Session ended.
+      <button class="btn btn-secondary btn-sm" id="btn-recall-restart">Restart</button>
+    </div>
+  </div>
+
+  <!-- In-app meeting detail view -->
+  <div class="detail-overlay" id="detail-overlay">
+    <div class="detail-card" role="dialog" aria-modal="true" aria-labelledby="detail-title">
+      <div class="detail-header">
+        <div class="detail-header-copy">
+          <div class="detail-title" id="detail-title">Meeting</div>
+          <div class="detail-meta" id="detail-meta"></div>
+        </div>
+        <div class="detail-actions">
+          <button class="btn btn-secondary btn-sm" id="btn-discuss-ai">Discuss with Agent</button>
+          <button class="btn btn-secondary btn-sm" id="btn-open-external">Open in Editor</button>
+          <button class="btn btn-secondary btn-sm" id="btn-detail-close">Close</button>
+        </div>
+      </div>
+      <div class="detail-scroll" id="detail-scroll">
+        <div class="detail-empty">Select a meeting to view transcript and notes.</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Readiness -->
+  <div class="readiness-overlay" id="readiness-overlay">
+    <div class="readiness-card" role="dialog" aria-modal="true" aria-labelledby="readiness-title">
+      <div class="readiness-header">
+        <div>
+          <div class="readiness-title" id="readiness-title">Readiness Center</div>
+          <div class="readiness-sub">This view only reports what Minutes can verify right now. Optional items stay optional, and unknown states are never hidden behind fake confidence.</div>
+        </div>
+        <button class="btn btn-secondary btn-sm" id="btn-readiness-close">Close</button>
+      </div>
+      <div class="readiness-scroll" id="readiness-scroll"></div>
+    </div>
+  </div>
+
+  <!-- Recovery -->
+  <div class="recovery-overlay" id="recovery-overlay">
+    <div class="recovery-card" role="dialog" aria-modal="true" aria-labelledby="recovery-title">
+      <div class="recovery-header">
+        <div>
+          <div class="recovery-title" id="recovery-title">Recovery Center</div>
+          <div class="recovery-sub" id="recovery-subtitle">Retry preserved captures and watched files that failed to process, or open them directly in a folder.</div>
+        </div>
+        <button class="btn btn-secondary btn-sm" id="btn-recovery-close">Close</button>
+      </div>
+      <div class="recovery-scroll" id="recovery-scroll">
+        <div class="recovery-empty">No recovery items right now.</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- About -->
+  <div class="about-overlay" id="about-overlay">
+    <div class="about-card" role="dialog" aria-modal="true" aria-labelledby="about-title">
+      <div class="about-top">
+        <div class="about-brand">
+          <div class="brand-mark" aria-hidden="true"></div>
+          <div class="about-copy">
+            <h2 id="about-title">Minutes</h2>
+            <p>Local-first conversation memory that stays useful in the tray, the terminal, and inside agent workflows.</p>
+          </div>
+        </div>
+        <button class="btn btn-secondary btn-sm" id="btn-about-close">Close</button>
+      </div>
+      <div class="about-grid">
+        <div class="about-item">
+          <div class="about-item-title">Capture</div>
+          <div class="about-item-body">Meetings, memos, and thoughts become structured markdown instead of disappearing into app state.</div>
+        </div>
+        <div class="about-item">
+          <div class="about-item-title">Search</div>
+          <div class="about-item-body">Timeline, transcript, action items, and context stay queryable across desktop, CLI, and MCP surfaces.</div>
+        </div>
+        <div class="about-item">
+          <div class="about-item-title">Local First</div>
+          <div class="about-item-body">Audio capture and storage stay on your machine unless you explicitly opt into external model services.</div>
+        </div>
+        <div class="about-item">
+          <div class="about-item-title">Agent Native</div>
+          <div class="about-item-body">Built to work well with Claude Desktop, Claude Code, Cowork, Codex, and other tool-calling assistants.</div>
+        </div>
+      </div>
+      <div class="about-footer" id="about-tray-copy">
+        Minutes is open source, markdown-backed, and designed so the artifact remains valuable even outside this app. Power-user tray actions copy the latest summary or transcript and try to paste it into your previous app when macOS automation allows it.
+      </div>
+      <div class="about-controls">
+        <div class="about-controls-copy">
+          Show completion alerts when processing finishes in the background.
+        </div>
+        <button class="btn btn-secondary btn-sm toggle-btn" id="btn-toggle-notifications">On</button>
+      </div>
+      <div class="about-controls">
+        <div class="about-controls-copy">
+          Play original Minutes cues for start, stop, complete, and error events.
+        </div>
+        <button class="btn btn-secondary btn-sm toggle-btn" id="btn-toggle-cues">On</button>
+      </div>
+      <div class="about-controls">
+        <div class="about-controls-group">
+          <div class="about-controls-copy">
+            Opt-in global shortcut for quick-thought capture. Hold to record a short thought, or tap to lock recording hands-free and tap again to stop.
+          </div>
+          <select class="shortcut-select" id="select-hotkey-shortcut"></select>
+          <div class="about-controls-meta" id="hotkey-status">Off by default. If the shortcut is already owned by another app, Minutes leaves it disabled.</div>
+        </div>
+        <button class="btn btn-secondary btn-sm toggle-btn" id="btn-toggle-hotkey">Off</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Settings -->
+  <div class="about-overlay" id="settings-overlay">
+    <div class="about-card" role="dialog" aria-modal="true" aria-labelledby="settings-title" style="width: min(580px, 100%); max-height: calc(100vh - 40px);">
+      <div class="about-top">
+        <h2 id="settings-title" style="font-size: 20px; font-family: var(--font-display);">Settings</h2>
+        <button class="btn btn-secondary btn-sm" id="btn-settings-close">Close</button>
+      </div>
+
+      <!-- General -->
+      <div style="margin-bottom: 16px;">
+        <div class="about-item-title">GENERAL</div>
+        <div class="about-controls">
+          <div class="about-controls-copy">Show completion alerts</div>
+          <button class="btn btn-secondary btn-sm toggle-btn" id="settings-notifications">On</button>
+        </div>
+        <div class="about-controls">
+          <div class="about-controls-copy">Play sound cues for start, stop, and complete</div>
+          <button class="btn btn-secondary btn-sm toggle-btn" id="settings-cues">On</button>
+        </div>
+        <div class="about-controls">
+          <div class="about-controls-group">
+            <div class="about-controls-copy">Global hotkey for quick-thought capture</div>
+            <select class="shortcut-select" id="settings-hotkey-shortcut" style="margin-top: 6px;"></select>
+            <div class="about-controls-meta" id="settings-hotkey-status"></div>
+          </div>
+          <button class="btn btn-secondary btn-sm toggle-btn" id="settings-hotkey">Off</button>
+        </div>
+      </div>
+
+      <!-- Dictation -->
+      <div style="margin-bottom: 16px;">
+        <div class="about-item-title">DICTATION</div>
+        <div class="about-controls">
+          <div class="about-controls-group">
+            <div class="about-controls-copy">Standard shortcut (recommended)</div>
+            <select class="shortcut-select" id="settings-dictation-shortcut-select" style="margin-top: 6px;"></select>
+            <div class="about-controls-meta" id="settings-dictation-shortcut-status">Uses the standard global shortcut system. Recommended for most users.</div>
+          </div>
+          <button class="btn btn-secondary btn-sm toggle-btn" id="settings-dictation-shortcut">Off</button>
+        </div>
+        <div class="about-controls">
+          <div class="about-controls-group">
+            <div class="about-controls-copy">Raw key hotkey (advanced)</div>
+            <div style="display: flex; align-items: center; gap: 8px; margin-top: 6px;">
+              <button id="settings-dictation-hotkey-record" class="btn btn-secondary btn-sm" style="min-width: 100px; font-family: var(--font-mono); font-size: 12px;">Caps Lock</button>
+            </div>
+            <div class="about-controls-meta" id="settings-dictation-hotkey-status">Advanced mode. Hold the selected key to dictate, or tap to lock and tap again to stop. Requires Input Monitoring permission.</div>
+          </div>
+          <button class="btn btn-secondary btn-sm toggle-btn" id="settings-dictation-hotkey">Off</button>
+        </div>
+        <div class="about-controls">
+          <div class="about-controls-group">
+            <div class="about-controls-copy">Dictation whisper model</div>
+            <select id="settings-dictation-model" style="margin-top: 6px; width: 100%; padding: 6px 8px; border-radius: 8px; background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.1); color: var(--text); font-size: 13px;">
+              <option value="tiny">tiny — fastest, lower quality</option>
+              <option value="base">base — fast, decent quality (default)</option>
+              <option value="small">small — good quality, slower</option>
+            </select>
+            <div class="about-controls-meta">Smaller models = faster dictation. "base" is recommended.</div>
+          </div>
+        </div>
+        <div class="about-controls">
+          <div class="about-controls-copy">Log dictations to daily note</div>
+          <button class="btn btn-secondary btn-sm toggle-btn" id="settings-dictation-daily-note">On</button>
+        </div>
+        <div class="about-controls">
+          <div class="about-controls-group">
+            <div class="about-controls-copy">Silence timeout</div>
+            <div class="about-controls-meta">End dictation session after this much silence (after first speech).</div>
+            <select id="settings-dictation-silence" style="margin-top: 6px; width: 100%; padding: 6px 8px; border-radius: 8px; background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.1); color: var(--text); font-size: 13px;">
+              <option value="1000">1 second</option>
+              <option value="2000">2 seconds (default)</option>
+              <option value="3000">3 seconds</option>
+              <option value="5000">5 seconds</option>
+            </select>
+          </div>
+        </div>
+      </div>
+
+      <!-- Live Transcript -->
+      <div style="margin-bottom: 16px;">
+        <div class="about-item-title">LIVE TRANSCRIPT</div>
+        <div class="about-controls">
+          <div class="about-controls-group">
+            <div class="about-controls-copy">Keyboard shortcut</div>
+            <select class="shortcut-select" id="settings-live-shortcut-select" style="margin-top: 6px;">
+              <option value="CmdOrCtrl+Shift+L">Cmd+Shift+L</option>
+              <option value="CmdOrCtrl+Alt+L">Cmd+Option+L</option>
+              <option value="CmdOrCtrl+Shift+T">Cmd+Shift+T</option>
+            </select>
+            <div class="about-controls-meta">Toggle live transcript on/off from any app.</div>
+          </div>
+          <button class="btn btn-secondary btn-sm toggle-btn" id="settings-live-shortcut">Off</button>
+        </div>
+      </div>
+
+      <!-- Transcription -->
+      <div style="margin-bottom: 16px;">
+        <div class="about-item-title">TRANSCRIPTION</div>
+        <div class="about-controls">
+          <div class="about-controls-group">
+            <div class="about-controls-copy">Whisper model</div>
+            <select id="settings-whisper-model" style="margin-top: 6px; width: 100%; padding: 6px 8px; border-radius: 8px; background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.1); color: var(--text); font-size: 13px;">
+              <option value="tiny">tiny — 75 MB, fastest, lower quality</option>
+              <option value="base">base — 148 MB, fast, decent quality</option>
+              <option value="small">small — 466 MB, good quality (recommended)</option>
+              <option value="medium">medium — 1.5 GB, great quality</option>
+              <option value="large-v3">large-v3 — 3.1 GB, best quality</option>
+            </select>
+            <div style="display: flex; align-items: center; gap: 8px; margin-top: 4px;">
+              <div class="about-controls-meta" id="settings-model-status" style="flex: 1; margin: 0;"></div>
+              <button class="btn btn-secondary btn-sm" id="btn-download-model" style="white-space: nowrap; display: none;">Download</button>
+            </div>
+          </div>
+        </div>
+        <div class="about-controls">
+          <div class="about-controls-copy">Speaker diarization (identify who said what)</div>
+          <button class="btn btn-secondary btn-sm toggle-btn" id="settings-diarization">Off</button>
+        </div>
+      </div>
+
+      <!-- Summarization -->
+      <div style="margin-bottom: 16px;">
+        <div class="about-item-title">AUTO-SUMMARIZATION</div>
+        <div class="about-controls">
+          <div class="about-controls-group">
+            <div class="about-controls-copy">Automatic pipeline summarization</div>
+            <div class="about-controls-meta" style="margin-bottom: 6px;">By default, Claude summarizes your meetings conversationally via MCP — no configuration needed. Turn this on only if you want summaries generated automatically in the recording pipeline.</div>
+            <select id="settings-summarization-engine" style="width: 100%; padding: 6px 8px; border-radius: 8px; background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.1); color: var(--text); font-size: 13px;">
+              <option value="none">Off — Claude summarizes when you ask (recommended)</option>
+              <option value="agent">Agent CLI — uses your Claude Code or Codex subscription</option>
+              <option value="ollama">Ollama — local, free, runs on your machine</option>
+              <option value="claude">Claude API — direct API key (legacy)</option>
+              <option value="openai">OpenAI API — direct API key (legacy)</option>
+            </select>
+            <div class="about-controls-meta" id="settings-summarization-status"></div>
+          </div>
+        </div>
+        <div class="about-controls" id="settings-agent-command-row" style="display: none;">
+          <div class="about-controls-group">
+            <div class="about-controls-copy">Agent command</div>
+            <select id="settings-agent-command" style="margin-top: 6px; width: 100%; padding: 6px 8px; border-radius: 8px; background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.1); color: var(--text); font-size: 13px;">
+            </select>
+            <div class="about-controls-meta" id="settings-agent-command-status"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Privacy -->
+      <div style="margin-bottom: 16px;">
+        <div class="about-item-title">PRIVACY</div>
+        <div class="about-controls">
+          <div class="about-controls-copy">Hide windows from screen sharing</div>
+          <button class="btn btn-secondary btn-sm toggle-btn" id="settings-screen-share">On</button>
+        </div>
+        <div class="about-controls">
+          <div class="about-controls-group">
+            <div class="about-controls-copy">Capture screen context during recordings</div>
+            <div class="about-controls-meta">Screenshots sent to vision LLM for context. Requires Screen Recording permission.</div>
+          </div>
+          <button class="btn btn-secondary btn-sm toggle-btn" id="settings-screen-context">Off</button>
+        </div>
+        <div class="about-controls" id="settings-screen-interval-row" style="display: none;">
+          <div class="about-controls-group">
+            <div class="about-controls-copy">Screenshot interval</div>
+            <select id="settings-screen-interval" style="margin-top: 6px; width: 100%; padding: 6px 8px; border-radius: 8px; background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.1); color: var(--text); font-size: 13px;">
+              <option value="15">Every 15 seconds</option>
+              <option value="30">Every 30 seconds</option>
+              <option value="60">Every 60 seconds</option>
+            </select>
+          </div>
+        </div>
+      </div>
+
+      <!-- Vault Sync -->
+      <div style="margin-bottom: 16px;">
+        <div class="about-item-title">VAULT SYNC</div>
+        <div class="about-controls">
+          <div class="about-controls-group" style="flex: 1;">
+            <div class="about-controls-copy">Connect an Obsidian or Logseq vault</div>
+            <div class="about-controls-meta" id="vault-status-detail">Checking...</div>
+          </div>
+          <button class="btn btn-primary btn-sm" id="btn-vault-setup" style="white-space: nowrap;">Set Up Vault</button>
+        </div>
+        <div class="about-controls" id="vault-unlink-row" style="display: none;">
+          <div class="about-controls-copy" id="vault-active-path" style="font-family: var(--font-mono); font-size: 11px; opacity: 0.7;"></div>
+          <button class="btn btn-secondary btn-sm" id="btn-vault-unlink">Unlink</button>
+        </div>
+      </div>
+
+      <!-- Recall Agent -->
+      <div style="margin-bottom: 16px;">
+        <div class="about-item-title">RECALL AGENT</div>
+        <div class="about-controls">
+          <div class="about-controls-group">
+            <div class="about-controls-copy">AI agent for the Recall panel</div>
+            <select id="settings-agent" style="margin-top: 6px; width: 100%; padding: 6px 8px; border-radius: 8px; background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.1); color: var(--text); font-size: 13px;">
+            </select>
+            <div class="about-controls-meta" id="settings-agent-status"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Storage -->
+      <div style="margin-bottom: 8px;">
+        <div class="about-item-title">STORAGE</div>
+        <div id="settings-storage-info" style="font-size: 13px; color: var(--text-secondary); line-height: 1.8; padding: 0 4px;">
+          Loading...
+        </div>
+      </div>
+
+      <!-- Diagnostics (Readiness + Recovery moved from header) -->
+      <div style="margin-bottom: 16px;">
+        <div class="about-item-title">DIAGNOSTICS</div>
+        <div class="about-controls">
+          <div class="about-controls-copy">System readiness and audio permission checks</div>
+          <button class="btn btn-secondary btn-sm" onclick="document.getElementById('settings-overlay').classList.remove('active');document.getElementById('btn-readiness').click();">Readiness</button>
+        </div>
+        <div class="about-controls">
+          <div class="about-controls-copy">Retry failed captures and unprocessed audio files</div>
+          <button class="btn btn-secondary btn-sm" onclick="document.getElementById('settings-overlay').classList.remove('active');document.getElementById('btn-recovery').click();">Recovery</button>
+        </div>
+      </div>
+
+      <div class="about-footer" style="font-size: 11px;">
+        Config file: <span id="settings-config-path" style="font-family: var(--font-mono); opacity: 0.7;"></span>
+      </div>
+    </div>
+  </div>
+
+  <style>
+    .onboarding-content {
+      width: 100%;
+      max-width: 420px;
+      margin: 0 auto;
+      text-align: center;
+    }
+
+    .onboarding-icon { font-size: 48px; margin-bottom: 12px; }
+
+    .onboarding-content h2 {
+      font-size: 22px;
+      font-weight: 700;
+      margin-bottom: 6px;
+    }
+
+    .onboarding-sub {
+      font-size: 13px;
+      color: var(--text-secondary);
+      margin-bottom: 24px;
+    }
+
+    .onboarding-steps { text-align: left; }
+
+    .onboarding-step {
+      padding: 14px 16px;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      margin-bottom: 12px;
+    }
+
+    .onboarding-step.disabled { opacity: 0.4; pointer-events: none; }
+    .onboarding-step.done { border-color: var(--green); }
+
+    .step-header {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 10px;
+    }
+
+    .step-num {
+      width: 22px;
+      height: 22px;
+      border-radius: 50%;
+      background: var(--bg-elevated);
+      color: var(--text-secondary);
+      font-size: 11px;
+      font-weight: 700;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+    }
+
+    .onboarding-step.done .step-num {
+      background: var(--green);
+      color: #000;
+    }
+
+    .step-title { font-size: 14px; font-weight: 500; flex: 1; }
+
+    .step-status {
+      font-size: 11px;
+      color: var(--green);
+      font-weight: 600;
+    }
+
+    .step-body { padding-left: 32px; }
+    .step-body p { font-size: 12px; color: var(--text-secondary); margin-bottom: 10px; }
+
+    .model-options { display: flex; flex-direction: column; gap: 6px; }
+    .model-btn { text-align: left; }
+
+    .download-progress { margin-top: 10px; }
+
+    .progress-bar {
+      height: 4px;
+      background: var(--bg-elevated);
+      border-radius: 2px;
+      overflow: hidden;
+      margin-bottom: 6px;
+    }
+
+    .progress-fill {
+      height: 100%;
+      background: var(--accent);
+      border-radius: 2px;
+      width: 0%;
+      transition: width 0.3s ease;
+    }
+
+    .progress-text { font-size: 11px; color: var(--text-secondary); }
+  </style>
+
+  <link rel="stylesheet" href="vendor/xterm/xterm.css">
+  <script src="vendor/xterm/xterm.js"></script>
+  <script src="vendor/xterm/xterm-addon-fit.js"></script>
+  <script src="vendor/xterm/minutes-theme.js"></script>
+
+  <script>
+    const { invoke } = window.__TAURI__.core;
+
+    const statusPill = document.getElementById('status-pill');
+    const recordingBar = document.getElementById('recording-bar');
+    const recordingLabel = document.getElementById('recording-label');
+    const processingBar = document.getElementById('processing-bar');
+    const processingTitle = document.getElementById('processing-title');
+    const recordingTime = document.getElementById('recording-time');
+    const processingStage = document.getElementById('processing-stage');
+    const processingElapsed = document.getElementById('processing-elapsed');
+    const outputNotice = document.getElementById('output-notice');
+    const outputNoticeIcon = document.getElementById('output-notice-icon');
+    const outputNoticeTitle = document.getElementById('output-notice-title');
+    const outputNoticeDetail = document.getElementById('output-notice-detail');
+    const outputNoticePath = document.getElementById('output-notice-path');
+    const quickNote = document.getElementById('quick-note');
+    const noteInput = document.getElementById('note-inline-input');
+    const footer = document.getElementById('footer');
+    const meetingsScroll = document.getElementById('meetings-scroll');
+    const searchInput = document.getElementById('search-input');
+    const detailOverlay = document.getElementById('detail-overlay');
+    const detailTitle = document.getElementById('detail-title');
+    const detailMeta = document.getElementById('detail-meta');
+    const detailScroll = document.getElementById('detail-scroll');
+    const openExternalBtn = document.getElementById('btn-open-external');
+    const aboutOverlay = document.getElementById('about-overlay');
+    const notificationToggle = document.getElementById('btn-toggle-notifications');
+    const cueToggle = document.getElementById('btn-toggle-cues');
+    const hotkeyToggle = document.getElementById('btn-toggle-hotkey');
+    const hotkeySelect = document.getElementById('select-hotkey-shortcut');
+    const hotkeyStatus = document.getElementById('hotkey-status');
+    const readinessOverlay = document.getElementById('readiness-overlay');
+    const readinessButton = document.getElementById('btn-readiness');
+    const readinessScroll = document.getElementById('readiness-scroll');
+    const dictationShortcutChip = document.getElementById('dictation-shortcut-chip');
+    const recoveryOverlay = document.getElementById('recovery-overlay');
+    const recoveryButton = document.getElementById('btn-recovery');
+    const recoveryCount = document.getElementById('recovery-count');
+    const recoveryScroll = document.getElementById('recovery-scroll');
+    const recoverySubtitle = document.getElementById('recovery-subtitle');
+    const quickThoughtButton = document.getElementById('btn-quick-thought');
+    const openOutputFolderButton = document.getElementById('btn-open-output-folder');
+    const aboutTrayCopy = document.getElementById('about-tray-copy');
+
+    let isRecording = false;
+    let isProcessing = false;
+    let isLiveTranscript = false;
+    let currentMeetingPath = null;
+    const liveBar = document.getElementById('live-bar');
+    // Live bar elements are accessed by ID inline (live-time, live-utterances)
+    let currentMeetingDetail = null;
+    let activeSearchQuery = '';
+    let currentSetup = null;
+    let latestOutput = null;
+    let readinessItems = [];
+    let recoveryItems = [];
+    let notifyOnCompletion = true;
+    let playCaptureCues = true;
+    let hotkeyEnabled = false;
+    let hotkeyShortcut = 'CmdOrCtrl+Shift+M';
+    let dictationShortcutActive = false;
+    let dictationShortcutLabel = 'Dictate';
+    let lastOutputKey = null;
+    let pollInterval = null;
+    let processingStartTime = null;
+    let processingTimerInterval = null;
+    let desktopCapabilities = {
+      platform: 'other',
+      folderRevealLabel: 'Show in Folder',
+      supportsCalendarIntegration: false,
+      supportsCallDetection: false,
+      supportsTrayArtifactCopy: false,
+      supportsDictationHotkey: false,
+    };
+    const NUM_BARS = 32;
+    const audioViz = document.getElementById('audio-viz');
+    const cues = {
+      start: new Audio('audio/cue-start.wav'),
+      stop: new Audio('audio/cue-stop.wav'),
+      complete: new Audio('audio/cue-complete.wav'),
+      error: new Audio('audio/cue-error.wav'),
+    };
+
+    function renderDictationShortcutChip() {
+      if (!dictationShortcutChip) return;
+      if (dictationShortcutActive) {
+        dictationShortcutChip.classList.add('active');
+        dictationShortcutChip.textContent = dictationShortcutLabel;
+      } else {
+        dictationShortcutChip.classList.remove('active');
+      }
+    }
+
+    // Create visualizer bars
+    for (let i = 0; i < NUM_BARS; i++) {
+      const bar = document.createElement('div');
+      bar.className = 'bar';
+      bar.style.height = '3px';
+      audioViz.appendChild(bar);
+    }
+
+    // History for smooth animation
+    const barHeights = new Array(NUM_BARS).fill(3);
+
+    function parentPath(path) {
+      if (!path) return path;
+      const normalized = path.replace(/[\\/]+$/, '');
+      const lastSlash = Math.max(normalized.lastIndexOf('/'), normalized.lastIndexOf('\\'));
+      return lastSlash === -1 ? normalized : normalized.slice(0, lastSlash);
+    }
+
+    function applyDesktopCapabilities(caps) {
+      if (!caps) return;
+      desktopCapabilities = {
+        ...desktopCapabilities,
+        ...caps,
+      };
+
+      openOutputFolderButton.textContent = desktopCapabilities.folderRevealLabel || 'Show in Folder';
+
+      if (recoverySubtitle) {
+        recoverySubtitle.textContent =
+          `Retry preserved captures and watched files that failed to process, or open them directly in ${desktopCapabilities.folderRevealLabel === 'Show in Finder' ? 'Finder' : desktopCapabilities.folderRevealLabel === 'Show in Explorer' ? 'Explorer' : 'a folder'}.`;
+      }
+
+      if (aboutTrayCopy) {
+        aboutTrayCopy.textContent = desktopCapabilities.supportsTrayArtifactCopy
+          ? 'Minutes is open source, markdown-backed, and designed so the artifact remains valuable even outside this app. Power-user tray actions copy the latest summary or transcript and try to paste it into your previous app when macOS automation allows it.'
+          : 'Minutes is open source, markdown-backed, and designed so the artifact remains valuable even outside this app. This desktop build focuses on recording, transcription, search, and Recall today; tray copy/paste automation remains macOS-only for now.';
+      }
+    }
+
+    async function loadDesktopCapabilities() {
+      try {
+        const caps = await invoke('cmd_desktop_capabilities');
+        applyDesktopCapabilities(caps);
+      } catch (e) {
+        console.error('Desktop capabilities:', e);
+      }
+    }
+
+    function updateViz(level) {
+      const bars = audioViz.children;
+      // Shift bars left, add new value at end
+      for (let i = 0; i < NUM_BARS - 1; i++) {
+        barHeights[i] = barHeights[i + 1];
+      }
+      // Map 0-100 to 3-28px with some randomness for natural feel
+      const jitter = level > 5 ? (Math.random() - 0.5) * level * 0.3 : 0;
+      barHeights[NUM_BARS - 1] = Math.max(3, Math.min(28, (level / 100) * 28 + jitter));
+
+      for (let i = 0; i < NUM_BARS; i++) {
+        bars[i].style.height = barHeights[i] + 'px';
+        bars[i].style.opacity = barHeights[i] > 4 ? '0.7' : '0.3';
+      }
+    }
+
+    function playCue(name) {
+      if (!playCaptureCues) return;
+      const cue = cues[name];
+      if (!cue) return;
+      try {
+        cue.currentTime = 0;
+        cue.play().catch(() => {});
+      } catch (_) {}
+    }
+
+    function currentModeLabel(mode) {
+      return mode === 'quick-thought' ? 'Quick Thought' : 'Recording';
+    }
+
+    function currentProcessingTitle(mode) {
+      return mode === 'quick-thought' ? 'Processing quick thought' : 'Processing recording';
+    }
+
+    // ── Status polling ──
+    async function checkStatus() {
+      try {
+        const status = await invoke('cmd_status');
+        const wasRecording = isRecording;
+        const wasProcessing = isProcessing;
+        const mode = status.recordingMode || 'meeting';
+        isRecording = status.recording;
+        isProcessing = !!status.processing;
+        updateOutputNotice(status.latestOutput);
+
+        if (isRecording) {
+          statusPill.className = 'status-pill recording';
+          statusPill.textContent = mode === 'quick-thought' ? 'quick thought' : 'recording';
+          recordingLabel.textContent = currentModeLabel(mode);
+          recordingBar.classList.add('active');
+          processingBar.classList.remove('active');
+          liveBar.classList.remove('active'); // T4: clear live bar if recording starts externally
+          isLiveTranscript = false;
+          footer.style.display = 'none';
+          if (status.elapsed) recordingTime.textContent = status.elapsed;
+          updateViz(status.audioLevel || 0);
+
+          // Speed up polling when recording starts
+          if (!wasRecording && !wasProcessing) {
+            startFastPoll();
+            playCue('start');
+          }
+        } else if (isProcessing) {
+          statusPill.className = 'status-pill processing';
+          statusPill.textContent = 'processing';
+          processingTitle.textContent = currentProcessingTitle(mode);
+          recordingBar.classList.remove('active');
+          processingBar.classList.add('active');
+          liveBar.classList.remove('active'); // T4
+          isLiveTranscript = false;
+          footer.style.display = 'none';
+          processingStage.textContent = status.processingStage || 'Preparing transcript...';
+
+          // Start elapsed timer when processing begins
+          if (!wasProcessing) {
+            processingStartTime = Date.now();
+            if (processingTimerInterval) clearInterval(processingTimerInterval);
+            processingTimerInterval = setInterval(() => {
+              if (!processingStartTime) return;
+              const secs = Math.floor((Date.now() - processingStartTime) / 1000);
+              const m = Math.floor(secs / 60);
+              const s = secs % 60;
+              processingElapsed.textContent = m > 0
+                ? `${m}:${String(s).padStart(2, '0')} elapsed`
+                : `${s}s elapsed`;
+            }, 1000);
+          }
+
+          if (!wasRecording && !wasProcessing) {
+            startFastPoll();
+          }
+          if (wasRecording) {
+            playCue('stop');
+          }
+        } else {
+          // Check live transcript status
+          let wasLive = isLiveTranscript;
+          try {
+            const liveStatus = await invoke('cmd_live_transcript_status');
+            isLiveTranscript = !!liveStatus.active;
+            if (isLiveTranscript) {
+              statusPill.className = 'status-pill live';
+              statusPill.textContent = 'live';
+              recordingBar.classList.remove('active');
+              processingBar.classList.remove('active');
+              liveBar.classList.add('active');
+              footer.style.display = 'none';
+              const n = liveStatus.line_count || 0;
+              const d = Math.round(liveStatus.duration_secs || 0);
+              const min = Math.floor(d / 60);
+              const sec = d % 60;
+              document.getElementById('live-time').textContent = `${min}:${String(sec).padStart(2, '0')}`;
+              document.getElementById('live-utterances').textContent = `${n} utterance${n !== 1 ? 's' : ''}`;
+              const lvl = Math.min(100, liveStatus.audioLevel || 0);
+              document.getElementById('live-level-fill').style.width = lvl + '%';
+              if (!wasLive) startFastPoll();
+            } else {
+              liveBar.classList.remove('active');
+            }
+          } catch { isLiveTranscript = false; liveBar.classList.remove('active'); }
+
+          if (!isLiveTranscript) {
+          statusPill.className = 'status-pill';
+          statusPill.textContent = 'idle';
+          recordingLabel.textContent = 'Recording';
+          processingTitle.textContent = 'Processing recording';
+          recordingBar.classList.remove('active');
+          processingBar.classList.remove('active');
+          quickNote.classList.remove('active');
+          footer.style.display = '';
+
+          // Clear processing elapsed timer
+          if (processingTimerInterval) { clearInterval(processingTimerInterval); processingTimerInterval = null; }
+          processingStartTime = null;
+          processingElapsed.textContent = '';
+
+          // Slow down polling when recording/processing/live stops (T5)
+          if (wasRecording || wasProcessing || wasLive) {
+            stopFastPoll();
+            loadMeetings(); // Refresh list
+
+            // Auto-open the result when processing completes successfully
+            if (wasProcessing && latestOutput && latestOutput.kind === 'saved') {
+              openMeetingDetail(latestOutput.path);
+            }
+          }
+          } // end if (!isLiveTranscript)
+        }
+      } catch (e) {
+        console.error('Status:', e);
+      }
+    }
+
+    function startFastPoll() {
+      stopFastPoll();
+      pollInterval = setInterval(checkStatus, 150);
+    }
+
+    function stopFastPoll() {
+      if (pollInterval) { clearInterval(pollInterval); pollInterval = null; }
+    }
+
+    function updateOutputNotice(notice) {
+      latestOutput = notice || null;
+      if (!notice) {
+        outputNotice.classList.remove('active', 'capture');
+        lastOutputKey = null;
+        return;
+      }
+
+      const isCapture = notice.kind === 'preserved-capture';
+      const nextKey = `${notice.kind}:${notice.path}`;
+      if (nextKey !== lastOutputKey) {
+        playCue(isCapture ? 'error' : 'complete');
+        lastOutputKey = nextKey;
+      }
+      outputNotice.classList.toggle('capture', isCapture);
+      outputNotice.classList.add('active');
+      outputNoticeIcon.textContent = isCapture ? '!' : '✓';
+      outputNoticeTitle.textContent = notice.title || (isCapture ? 'Capture preserved' : 'Saved meeting');
+      outputNoticeDetail.textContent = notice.detail || '';
+      outputNoticePath.textContent = notice.path || '';
+      document.getElementById('btn-open-output').textContent = isCapture ? 'Open Capture' : 'Open Meeting';
+    }
+
+    function setNotificationToggle(enabled) {
+      notifyOnCompletion = enabled;
+      notificationToggle.textContent = enabled ? 'On' : 'Off';
+      notificationToggle.classList.toggle('btn-primary', enabled);
+      notificationToggle.classList.toggle('btn-secondary', !enabled);
+      localStorage.setItem('minutes.notifyOnCompletion', enabled ? 'true' : 'false');
+    }
+
+    function setCueToggle(enabled) {
+      playCaptureCues = enabled;
+      cueToggle.textContent = enabled ? 'On' : 'Off';
+      cueToggle.classList.toggle('btn-primary', enabled);
+      cueToggle.classList.toggle('btn-secondary', !enabled);
+      localStorage.setItem('minutes.playCaptureCues', enabled ? 'true' : 'false');
+    }
+
+    function setHotkeyStatus(text, isError = false) {
+      hotkeyStatus.textContent = text;
+      hotkeyStatus.classList.toggle('error', isError);
+    }
+
+    function setHotkeyToggle(enabled) {
+      hotkeyEnabled = enabled;
+      hotkeyToggle.textContent = enabled ? 'On' : 'Off';
+      hotkeyToggle.classList.toggle('btn-primary', enabled);
+      hotkeyToggle.classList.toggle('btn-secondary', !enabled);
+      localStorage.setItem('minutes.globalHotkeyEnabled', enabled ? 'true' : 'false');
+      setHotkeyStatus(
+        enabled
+          ? `Enabled for ${hotkeyShortcut}. Hold to record, or tap to lock and tap again to stop.`
+          : 'Off by default. If another app already owns the shortcut, Minutes leaves it disabled.',
+        false
+      );
+    }
+
+    function applyHotkeySettings(settings) {
+      hotkeySelect.replaceChildren();
+      for (const choice of settings.choices || []) {
+        const option = document.createElement('option');
+        option.value = choice.value;
+        option.textContent = choice.label;
+        hotkeySelect.appendChild(option);
+      }
+
+      hotkeyShortcut = settings.shortcut || hotkeyShortcut;
+      hotkeySelect.value = hotkeyShortcut;
+      setHotkeyToggle(!!settings.enabled);
+    }
+
+    async function syncHotkey(enabled, shortcut) {
+      try {
+        const settings = await invoke('cmd_set_global_hotkey', { enabled, shortcut });
+        hotkeyShortcut = settings.shortcut;
+        localStorage.setItem('minutes.globalHotkeyShortcut', hotkeyShortcut);
+        applyHotkeySettings(settings);
+      } catch (e) {
+        console.error('Set hotkey:', e);
+        hotkeyEnabled = false;
+        localStorage.setItem('minutes.globalHotkeyEnabled', 'false');
+        hotkeyToggle.textContent = 'Off';
+        hotkeyToggle.classList.remove('btn-primary');
+        hotkeyToggle.classList.add('btn-secondary');
+        setHotkeyStatus(String(e), true);
+      }
+    }
+
+    async function loadHotkeySettings() {
+      try {
+        const settings = await invoke('cmd_global_hotkey_settings');
+        hotkeyShortcut =
+          localStorage.getItem('minutes.globalHotkeyShortcut') || settings.shortcut || hotkeyShortcut;
+        const storedEnabled = localStorage.getItem('minutes.globalHotkeyEnabled');
+        const desiredEnabled = storedEnabled === null ? !!settings.enabled : storedEnabled === 'true';
+        await syncHotkey(desiredEnabled, hotkeyShortcut);
+      } catch (e) {
+        console.error('Load hotkey settings:', e);
+        setHotkeyStatus('Global shortcut is unavailable right now.', true);
+      }
+    }
+
+    function closeReadiness() {
+      readinessOverlay.classList.remove('active');
+    }
+
+    function closeRecovery() {
+      recoveryOverlay.classList.remove('active');
+    }
+
+    async function loadReadinessItems() {
+      try {
+        readinessItems = await invoke('cmd_permission_center');
+      } catch (e) {
+        console.error('Readiness items:', e);
+        readinessItems = [];
+      }
+
+      readinessScroll.replaceChildren();
+      const list = document.createElement('div');
+      list.className = 'readiness-list';
+
+      for (const item of readinessItems) {
+        const card = document.createElement('div');
+        card.className = 'readiness-item';
+
+        const top = document.createElement('div');
+        top.className = 'readiness-item-top';
+
+        const title = document.createElement('div');
+        title.className = 'readiness-item-title';
+        title.textContent = item.label;
+
+        const state = document.createElement('div');
+        state.className = `readiness-state ${item.state}`;
+        state.textContent = item.state;
+
+        top.appendChild(title);
+        top.appendChild(state);
+
+        const detail = document.createElement('div');
+        detail.className = 'readiness-item-detail';
+        detail.textContent = item.detail;
+
+        card.appendChild(top);
+        card.appendChild(detail);
+
+        if (item.optional) {
+          const optional = document.createElement('div');
+          optional.className = 'readiness-optional';
+          optional.textContent = 'Optional';
+          card.appendChild(optional);
+        }
+
+        list.appendChild(card);
+      }
+
+      readinessScroll.appendChild(list);
+    }
+
+    async function loadRecoveryItems() {
+      try {
+        recoveryItems = await invoke('cmd_recovery_items');
+      } catch (e) {
+        console.error('Recovery items:', e);
+        recoveryItems = [];
+      }
+
+      recoveryCount.textContent = recoveryItems.length;
+      recoveryButton.classList.toggle('active', recoveryItems.length > 0);
+
+      recoveryScroll.replaceChildren();
+      if (!recoveryItems.length) {
+        const empty = document.createElement('div');
+        empty.className = 'recovery-empty';
+        empty.textContent = 'No recovery items right now.';
+        recoveryScroll.appendChild(empty);
+        return;
+      }
+
+      const list = document.createElement('div');
+      list.className = 'recovery-list';
+
+      for (const item of recoveryItems) {
+        const card = document.createElement('div');
+        card.className = 'recovery-item';
+
+        const top = document.createElement('div');
+        top.className = 'recovery-item-top';
+
+        const title = document.createElement('div');
+        title.className = 'recovery-item-title';
+        title.textContent = item.title || 'Recovery item';
+
+        const kind = document.createElement('div');
+        kind.className = 'recovery-kind';
+        kind.textContent = item.kind.replace(/-/g, ' ');
+
+        top.appendChild(title);
+        top.appendChild(kind);
+
+        const detail = document.createElement('div');
+        detail.className = 'recovery-item-detail';
+        detail.textContent = item.detail;
+
+        const path = document.createElement('div');
+        path.className = 'recovery-item-path';
+        path.textContent = item.path;
+
+        const actions = document.createElement('div');
+        actions.className = 'recovery-actions';
+
+        const retry = document.createElement('button');
+        retry.className = 'btn btn-secondary btn-sm';
+        retry.textContent = item.retry_type === 'memo' ? 'Retry as Memo' : 'Retry as Meeting';
+        retry.addEventListener('click', async () => {
+          try {
+            await invoke('cmd_retry_recovery', {
+              path: item.path,
+              contentType: item.retry_type
+            });
+            // Processing now runs in background — close recovery panel
+            // and let status polling pick up the processing state + result
+            closeRecovery();
+            startFastPoll();
+          } catch (e) {
+            console.error('Retry recovery:', e);
+          }
+        });
+
+        const open = document.createElement('button');
+        open.className = 'btn btn-secondary btn-sm';
+        open.textContent = 'Open';
+        open.addEventListener('click', async () => {
+          try {
+            await invoke('cmd_open_file', { path: item.path });
+          } catch (e) {
+            console.error('Open recovery item:', e);
+          }
+        });
+
+        const folder = document.createElement('button');
+        folder.className = 'btn btn-secondary btn-sm';
+        folder.textContent = desktopCapabilities.folderRevealLabel || 'Show in Folder';
+        folder.addEventListener('click', async () => {
+          try {
+            const parent = parentPath(item.path);
+            await invoke('cmd_open_file', { path: parent });
+          } catch (e) {
+            console.error('Open recovery folder:', e);
+          }
+        });
+
+        actions.appendChild(retry);
+        actions.appendChild(open);
+        actions.appendChild(folder);
+
+        card.appendChild(top);
+        card.appendChild(detail);
+        card.appendChild(path);
+        card.appendChild(actions);
+        list.appendChild(card);
+      }
+
+      recoveryScroll.appendChild(list);
+    }
+
+    // ── Recording controls ──
+    document.getElementById('btn-record').addEventListener('click', async () => {
+      try {
+        await invoke('cmd_start_recording');
+      } catch (e) {
+        console.error('Record:', e);
+      }
+    });
+
+    quickThoughtButton.addEventListener('click', async () => {
+      try {
+        await invoke('cmd_start_recording', { mode: 'quick-thought' });
+      } catch (e) {
+        console.error('Quick thought:', e);
+      }
+    });
+
+    document.getElementById('btn-stop').addEventListener('click', async () => {
+      try {
+        await invoke('cmd_stop_recording');
+      } catch (e) {
+        console.error('Stop:', e);
+      }
+    });
+
+    // ── Live transcript controls ──
+    document.getElementById('btn-live').addEventListener('click', async () => {
+      const btn = document.getElementById('btn-live');
+
+      // First-use explainer (shown once, stored in localStorage)
+      if (!localStorage.getItem('minutes_live_intro_seen')) {
+        localStorage.setItem('minutes_live_intro_seen', '1');
+        const noticeTitle = document.getElementById('output-notice-title');
+        const noticeDetail = document.getElementById('output-notice-detail');
+        const noticeIcon = document.getElementById('output-notice-icon');
+        const notice = document.getElementById('output-notice');
+        if (noticeIcon) noticeIcon.textContent = '\u{1F399}';
+        if (noticeTitle) noticeTitle.textContent = 'Live Transcript';
+        if (noticeDetail) noticeDetail.textContent = 'Transcribes your meeting in real time. Ask your agent in Recall for coaching during the call.';
+        if (notice) notice.classList.add('active');
+        // Auto-dismiss after 4 seconds, then proceed with start
+        await new Promise(r => setTimeout(r, 3000));
+        if (notice) notice.classList.remove('active');
+      }
+
+      const origText = btn.textContent;
+      btn.disabled = true;
+      btn.textContent = 'Starting...';
+      try {
+        await invoke('cmd_start_live_transcript');
+      } catch (e) {
+        console.error('Live:', e);
+        // Show visible error using the output-notice pattern
+        const noticeIcon = document.getElementById('output-notice-icon');
+        const noticeTitle = document.getElementById('output-notice-title');
+        const noticeDetail = document.getElementById('output-notice-detail');
+        const notice = document.getElementById('output-notice');
+        if (noticeIcon) noticeIcon.textContent = '✕';
+        if (noticeTitle) noticeTitle.textContent = 'Live transcript failed';
+        if (noticeDetail) noticeDetail.textContent = String(e);
+        if (notice) notice.classList.add('active');
+      } finally {
+        btn.disabled = false;
+        btn.textContent = origText;
+      }
+    });
+
+    document.getElementById('btn-stop-live').addEventListener('click', async () => {
+      try {
+        await invoke('cmd_stop_live_transcript');
+      } catch (e) {
+        console.error('Stop live:', e);
+      }
+    });
+
+    document.getElementById('btn-open-output').addEventListener('click', async () => {
+      if (!latestOutput?.path) return;
+      try {
+        await openMeetingDetail(latestOutput.path);
+      } catch (e) {
+        console.error('Open output:', e);
+      }
+    });
+
+    document.getElementById('btn-open-output-folder').addEventListener('click', async () => {
+      if (!latestOutput?.path) return;
+      try {
+        const folder = parentPath(latestOutput.path);
+        await invoke('cmd_open_file', { path: folder });
+      } catch (e) {
+        console.error('Open folder:', e);
+      }
+    });
+
+    document.getElementById('btn-dismiss-output').addEventListener('click', async () => {
+      try {
+        await invoke('cmd_clear_latest_output');
+        updateOutputNotice(null);
+      } catch (e) {
+        console.error('Dismiss output:', e);
+      }
+    });
+
+    readinessButton.addEventListener('click', () => {
+      loadReadinessItems();
+      readinessOverlay.classList.add('active');
+    });
+    document.getElementById('btn-readiness-close').addEventListener('click', closeReadiness);
+    readinessOverlay.addEventListener('click', (e) => {
+      if (e.target === readinessOverlay) closeReadiness();
+    });
+
+    notificationToggle.addEventListener('click', async () => {
+      const next = !notifyOnCompletion;
+      try {
+        await invoke('cmd_set_completion_notifications', { enabled: next });
+        setNotificationToggle(next);
+      } catch (e) {
+        console.error('Set notifications:', e);
+      }
+    });
+
+    cueToggle.addEventListener('click', () => {
+      setCueToggle(!playCaptureCues);
+    });
+
+    hotkeyToggle.addEventListener('click', async () => {
+      await syncHotkey(!hotkeyEnabled, hotkeySelect.value || hotkeyShortcut);
+    });
+
+    hotkeySelect.addEventListener('change', async () => {
+      await syncHotkey(hotkeyEnabled, hotkeySelect.value || hotkeyShortcut);
+    });
+
+    recoveryButton.addEventListener('click', () => {
+      recoveryOverlay.classList.add('active');
+    });
+    document.getElementById('btn-recovery-close').addEventListener('click', closeRecovery);
+    recoveryOverlay.addEventListener('click', (e) => {
+      if (e.target === recoveryOverlay) closeRecovery();
+    });
+
+    // ── Inline note ──
+    document.getElementById('btn-note-inline').addEventListener('click', () => {
+      quickNote.classList.toggle('active');
+      if (quickNote.classList.contains('active')) {
+        noteInput.focus();
+      }
+    });
+
+    async function saveInlineNote() {
+      const text = noteInput.value.trim();
+      if (!text) return;
+      try {
+        await invoke('cmd_add_note', { text });
+        noteInput.value = '';
+        quickNote.classList.remove('active');
+      } catch (e) {
+        console.error('Note:', e);
+      }
+    }
+
+    document.getElementById('btn-note-save').addEventListener('click', saveInlineNote);
+    noteInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); saveInlineNote(); }
+      if (e.key === 'Escape') { quickNote.classList.remove('active'); }
+    });
+
+    // ── Meeting list ──
+    function groupByDate(meetings) {
+      const groups = {};
+      const today = new Date();
+      const yesterday = new Date(today);
+      yesterday.setDate(yesterday.getDate() - 1);
+
+      for (const m of meetings) {
+        const d = new Date(m.date || m.path);
+        let label;
+        if (d.toDateString() === today.toDateString()) label = 'Today';
+        else if (d.toDateString() === yesterday.toDateString()) label = 'Yesterday';
+        else label = d.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
+
+        if (!groups[label]) groups[label] = [];
+        groups[label].push(m);
+      }
+      return groups;
+    }
+
+    function formatTime(dateStr) {
+      if (!dateStr) return '';
+      try {
+        return new Date(dateStr).toLocaleTimeString('en-US', {
+          hour: 'numeric', minute: '2-digit'
+        });
+      } catch { return ''; }
+    }
+
+    function formatDetailDate(dateStr) {
+      if (!dateStr) return '';
+      try {
+        return new Date(dateStr).toLocaleString('en-US', {
+          month: 'short',
+          day: 'numeric',
+          hour: 'numeric',
+          minute: '2-digit'
+        });
+      } catch { return ''; }
+    }
+
+    function escapeRegex(text) {
+      return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    }
+
+    function searchTerms(query) {
+      return [...new Set(
+        query
+          .trim()
+          .split(/\s+/)
+          .map(term => term.trim())
+          .filter(Boolean)
+      )];
+    }
+
+    function buildHighlightedFragment(text, query) {
+      const fragment = document.createDocumentFragment();
+      const terms = searchTerms(query);
+
+      if (!text || terms.length === 0) {
+        fragment.appendChild(document.createTextNode(text || ''));
+        return fragment;
+      }
+
+      const regex = new RegExp(`(${terms.map(escapeRegex).join('|')})`, 'gi');
+      let lastIndex = 0;
+
+      for (const match of text.matchAll(regex)) {
+        const index = match.index ?? 0;
+        if (index > lastIndex) {
+          fragment.appendChild(document.createTextNode(text.slice(lastIndex, index)));
+        }
+
+        const mark = document.createElement('mark');
+        mark.textContent = match[0];
+        fragment.appendChild(mark);
+        lastIndex = index + match[0].length;
+      }
+
+      if (lastIndex < text.length) {
+        fragment.appendChild(document.createTextNode(text.slice(lastIndex)));
+      }
+
+      return fragment;
+    }
+
+    function setHighlightedText(element, text, query) {
+      element.replaceChildren(buildHighlightedFragment(text || '', query));
+    }
+
+    function closeDetailView() {
+      detailOverlay.classList.remove('active');
+      currentMeetingPath = null;
+      currentMeetingDetail = null;
+    }
+
+    function closeAbout() {
+      aboutOverlay.classList.remove('active');
+    }
+
+    function renderDetailSections(detail) {
+      currentMeetingDetail = detail;
+      detailTitle.textContent = detail.title || 'Untitled';
+      detailMeta.replaceChildren();
+      detailScroll.replaceChildren();
+      currentMeetingPath = detail.path;
+
+      const chips = [
+        formatDetailDate(detail.date),
+        detail.duration,
+        detail.content_type,
+        detail.status && detail.status !== 'complete' ? detail.status : null,
+        detail.calendar_event || null,
+        detail.attendees && detail.attendees.length ? `${detail.attendees.length} attendee${detail.attendees.length === 1 ? '' : 's'}` : null
+      ].filter(Boolean);
+
+      for (const chipText of chips) {
+        const chip = document.createElement('span');
+        chip.className = 'detail-meta-chip';
+        chip.textContent = chipText;
+        detailMeta.appendChild(chip);
+      }
+
+      if (detail.context) {
+        const contextCard = document.createElement('div');
+        contextCard.className = 'detail-context';
+
+        const label = document.createElement('div');
+        label.className = 'detail-context-label';
+        label.textContent = 'Context';
+
+        const body = document.createElement('div');
+        body.className = 'detail-context-body';
+        setHighlightedText(body, detail.context, activeSearchQuery);
+
+        contextCard.appendChild(label);
+        contextCard.appendChild(body);
+        detailScroll.appendChild(contextCard);
+      }
+
+      // Speaker attribution card
+      if (detail.speaker_map && detail.speaker_map.length > 0) {
+        const speakerCard = document.createElement('div');
+        speakerCard.className = 'detail-speakers';
+
+        const label = document.createElement('div');
+        label.className = 'detail-speakers-label';
+        label.textContent = 'Speakers';
+        speakerCard.appendChild(label);
+
+        for (const attr of detail.speaker_map) {
+          const row = document.createElement('div');
+          row.className = 'speaker-row';
+
+          const labelSpan = document.createElement('span');
+          labelSpan.className = 'speaker-label';
+          labelSpan.textContent = attr.speaker_label;
+          row.appendChild(labelSpan);
+
+          const nameSpan = document.createElement('span');
+          nameSpan.className = 'speaker-name';
+          nameSpan.textContent = attr.name;
+          row.appendChild(nameSpan);
+
+          const badge = document.createElement('span');
+          badge.className = `speaker-badge ${attr.confidence}`;
+          badge.textContent = attr.confidence;
+          row.appendChild(badge);
+
+          // Show confirm button for non-high confidence
+          if (attr.confidence !== 'high') {
+            const btn = document.createElement('button');
+            btn.className = 'speaker-confirm-btn';
+            btn.textContent = 'Confirm';
+            btn.onclick = async () => {
+              const newName = prompt(`Confirm speaker name for ${attr.speaker_label}:`, attr.name);
+              if (newName) {
+                try {
+                  await invoke('cmd_confirm_speaker', {
+                    meetingPath: detail.path,
+                    speakerLabel: attr.speaker_label,
+                    name: newName,
+                  });
+                  // Refresh the detail view
+                  openMeetingDetail(detail.path);
+                } catch (e) {
+                  console.error('Confirm speaker failed:', e);
+                }
+              }
+            };
+            row.appendChild(btn);
+          }
+
+          speakerCard.appendChild(row);
+        }
+
+        detailScroll.appendChild(speakerCard);
+      }
+
+      if (!detail.sections || detail.sections.length === 0) {
+        const empty = document.createElement('div');
+        empty.className = 'detail-empty';
+        empty.textContent = 'No transcript content available for this recording.';
+        detailScroll.appendChild(empty);
+      } else {
+        for (const section of detail.sections) {
+          const sectionEl = document.createElement('section');
+          sectionEl.className = 'detail-section';
+
+          const heading = document.createElement('div');
+          heading.className = 'detail-section-title';
+          heading.textContent = section.heading;
+
+          const body = document.createElement('div');
+          body.className = 'detail-section-body';
+          setHighlightedText(body, section.content || 'No content', activeSearchQuery);
+
+          sectionEl.appendChild(heading);
+          sectionEl.appendChild(body);
+          detailScroll.appendChild(sectionEl);
+        }
+      }
+
+      detailOverlay.classList.add('active');
+    }
+
+    async function openMeetingDetail(path) {
+      try {
+        const detail = await invoke('cmd_get_meeting_detail', { path });
+        renderDetailSections(detail);
+      } catch (e) {
+        console.error('Detail:', e);
+        await invoke('cmd_open_file', { path });
+      }
+    }
+
+    function renderMeetings(meetings) {
+      meetingsScroll.replaceChildren();
+
+      if (!meetings || meetings.length === 0) {
+        footer.style.display = 'none';
+        renderSetupEmptyState();
+        return;
+      }
+
+      footer.style.display = '';
+
+      const groups = groupByDate(meetings);
+      for (const [label, items] of Object.entries(groups)) {
+        const header = document.createElement('div');
+        header.className = 'date-group';
+        header.textContent = label;
+        meetingsScroll.appendChild(header);
+
+        for (const m of items) {
+          const item = document.createElement('div');
+          item.className = 'meeting-item';
+          item.addEventListener('click', () => {
+            openMeetingDetail(m.path);
+          });
+
+          const info = document.createElement('div');
+          info.className = 'meeting-info';
+
+          const title = document.createElement('div');
+          title.className = 'meeting-title';
+          setHighlightedText(title, m.title || 'Untitled', activeSearchQuery);
+
+          const meta = document.createElement('div');
+          meta.className = 'meeting-meta';
+          meta.textContent = formatTime(m.date);
+
+          info.appendChild(title);
+          info.appendChild(meta);
+
+          if (activeSearchQuery && m.snippet) {
+            const snippet = document.createElement('div');
+            snippet.className = 'meeting-snippet';
+            setHighlightedText(snippet, m.snippet, activeSearchQuery);
+            info.appendChild(snippet);
+          }
+
+          // Lifecycle badges (prepped / recorded / debriefed)
+          if (m.badges && m.badges.length > 0) {
+            const badgeRow = document.createElement('div');
+            badgeRow.className = 'meeting-badges';
+            for (const b of m.badges) {
+              const lb = document.createElement('span');
+              lb.className = 'lifecycle-badge ' + b;
+              lb.textContent = b;
+              lb.setAttribute('aria-label', b);
+              badgeRow.appendChild(lb);
+            }
+            info.appendChild(badgeRow);
+          }
+
+          const badge = document.createElement('span');
+          const typeClass = m.content_type === 'memo' ? ' memo' : m.content_type === 'dictation' ? ' dictation' : '';
+          badge.className = 'meeting-badge' + typeClass;
+          badge.textContent = m.content_type || 'meeting';
+
+          item.appendChild(info);
+          item.appendChild(badge);
+          meetingsScroll.appendChild(item);
+        }
+      }
+    }
+
+    async function loadMeetings() {
+      try {
+        const meetings = await invoke('cmd_list_meetings', { limit: 30 });
+        renderMeetings(meetings);
+      } catch (e) {
+        console.error('Load:', e);
+        renderMeetings([]);
+      }
+    }
+
+    // ── Search ──
+    let searchTimeout;
+    searchInput.addEventListener('input', (e) => {
+      clearTimeout(searchTimeout);
+      const query = e.target.value.trim();
+      activeSearchQuery = query;
+      if (!query) {
+        loadMeetings();
+        if (currentMeetingDetail && detailOverlay.classList.contains('active')) {
+          renderDetailSections(currentMeetingDetail);
+        }
+        return;
+      }
+      searchTimeout = setTimeout(async () => {
+        try {
+          const results = await invoke('cmd_search', { query });
+          renderMeetings(results);
+          if (currentMeetingDetail && detailOverlay.classList.contains('active')) {
+            renderDetailSections(currentMeetingDetail);
+          }
+        } catch (e) { console.error('Search:', e); }
+      }, 250);
+    });
+
+    // ── Onboarding ──
+    async function checkSetup() {
+      try {
+        currentSetup = await invoke('cmd_needs_setup');
+        loadMeetings();
+      } catch (e) {
+        console.error('Setup check:', e);
+      }
+    }
+
+    function setupOnboarding(root) {
+      const hasModel = !!currentSetup?.hasModel;
+      if (hasModel) {
+        root.querySelector('#step-model').classList.add('done');
+        root.querySelector('#step-model-status').textContent = 'Done';
+        root.querySelector('#step-model-body').style.display = 'none';
+        root.querySelector('#step-first-artifact').classList.remove('disabled');
+      }
+
+      root.querySelectorAll('.model-btn').forEach(btn => {
+        btn.addEventListener('click', async () => {
+          const model = btn.dataset.model;
+          root.querySelectorAll('.model-btn').forEach(b => b.disabled = true);
+
+          const progress = root.querySelector('.download-progress');
+          const fill = root.querySelector('.progress-fill');
+          const text = root.querySelector('.progress-text');
+          progress.style.display = 'block';
+
+          // Animate progress (curl doesn't give us real progress via invoke)
+          fill.style.width = '20%';
+          text.textContent = `Downloading ${model} model...`;
+
+          const progressTimer = setInterval(() => {
+            const current = parseFloat(fill.style.width);
+            if (current < 85) fill.style.width = (current + 2) + '%';
+          }, 500);
+
+          try {
+            const result = await invoke('cmd_download_model', { model });
+            clearInterval(progressTimer);
+            fill.style.width = '100%';
+            text.textContent = result;
+
+            root.querySelector('#step-model').classList.add('done');
+            root.querySelector('#step-model-status').textContent = 'Done';
+            root.querySelector('#step-model-body').style.display = 'none';
+
+            currentSetup = { ...currentSetup, hasModel: true, needsSetup: false };
+            root.querySelector('#step-first-artifact').classList.remove('disabled');
+          } catch (e) {
+            clearInterval(progressTimer);
+            fill.style.width = '0%';
+            fill.style.background = 'var(--red)';
+            text.textContent = `Error: ${e}`;
+            root.querySelectorAll('.model-btn').forEach(b => b.disabled = false);
+          }
+        });
+      });
+
+      root.querySelector('#btn-start-first-recording').addEventListener('click', async () => {
+        try {
+          await invoke('cmd_start_recording');
+        } catch (e) {
+          console.error('First recording:', e);
+        }
+      });
+    }
+
+    function renderSetupEmptyState() {
+      const empty = document.createElement('div');
+      empty.className = 'empty-state';
+      empty.innerHTML = `
+        <div class="onboarding-content">
+          <div class="onboarding-icon">🎙</div>
+          <h2>Welcome to Minutes</h2>
+          <p class="onboarding-sub">Download the model once, then create one short recording. The moment it saves, this becomes your real meeting list.</p>
+          <div class="onboarding-steps">
+            <div class="onboarding-step" id="step-model">
+              <div class="step-header">
+                <span class="step-num">1</span>
+                <span class="step-title">Download speech model</span>
+                <span class="step-status" id="step-model-status"></span>
+              </div>
+              <div class="step-body" id="step-model-body">
+                <p>Choose a model size:</p>
+                <div class="model-options">
+                  <button class="btn btn-secondary btn-sm model-btn" data-model="tiny">Tiny (75 MB, fast)</button>
+                  <button class="btn btn-primary btn-sm model-btn" data-model="base">Base (141 MB, recommended)</button>
+                  <button class="btn btn-secondary btn-sm model-btn" data-model="small">Small (466 MB, best accuracy)</button>
+                </div>
+                <div class="download-progress" style="display: none;">
+                  <div class="progress-bar"><div class="progress-fill"></div></div>
+                  <span class="progress-text">Downloading...</span>
+                </div>
+              </div>
+            </div>
+            <div class="onboarding-step disabled" id="step-first-artifact">
+              <div class="step-header">
+                <span class="step-num">2</span>
+                <span class="step-title">Create your first artifact</span>
+              </div>
+              <div class="step-body">
+                <p>Make a quick 10-second test recording. Say one sentence, stop, and let Minutes save its first markdown artifact.</p>
+                <button class="btn btn-primary" id="btn-start-first-recording">Record a 10-second test</button>
+              </div>
+            </div>
+            <div class="onboarding-step disabled">
+              <div class="step-header">
+                <span class="step-num">3</span>
+                <span class="step-title">Watch it appear here</span>
+              </div>
+              <div class="step-body">
+                <p>As soon as the test recording finishes processing, this setup card disappears and your first saved artifact takes its place.</p>
+              </div>
+            </div>
+          </div>
+        </div>`;
+      meetingsScroll.appendChild(empty);
+      setupOnboarding(empty);
+    }
+
+    // ── Upcoming meetings ──
+    async function checkUpcoming() {
+      if (!desktopCapabilities.supportsCalendarIntegration) {
+        document.getElementById('upcoming').style.display = 'none';
+        return;
+      }
+      if (isRecording) return;
+      try {
+        const events = await invoke('cmd_upcoming_meetings');
+        const upcoming = document.getElementById('upcoming');
+        if (events && events.length > 0) {
+          const next = events[0];
+          document.getElementById('upcoming-title').textContent = next.title;
+          const mins = next.minutes_until;
+          document.getElementById('upcoming-time').textContent =
+            mins <= 0 ? 'Starting now' :
+            mins === 1 ? 'In 1 minute' :
+            mins < 60 ? `In ${mins} minutes` :
+            `In ${Math.floor(mins / 60)}h ${mins % 60}m`;
+          upcoming.style.display = 'flex';
+
+          document.getElementById('btn-record-upcoming').onclick = async () => {
+            try {
+              await invoke('cmd_start_recording');
+            } catch (e) { console.error('Record:', e); }
+          };
+        } else {
+          upcoming.style.display = 'none';
+        }
+      } catch (e) {
+        // Calendar access may not be granted — silently hide
+        document.getElementById('upcoming').style.display = 'none';
+      }
+    }
+
+    document.getElementById('btn-detail-close').addEventListener('click', closeDetailView);
+    detailOverlay.addEventListener('click', (e) => {
+      if (e.target === detailOverlay) closeDetailView();
+    });
+    // Settings overlay
+    const settingsOverlay = document.getElementById('settings-overlay');
+    function openSettings() { settingsOverlay.classList.add('active'); loadSettings(); }
+    function closeSettings() { settingsOverlay.classList.remove('active'); }
+
+    document.getElementById('btn-settings').addEventListener('click', openSettings);
+    document.getElementById('btn-settings-close').addEventListener('click', closeSettings);
+    settingsOverlay.addEventListener('click', (e) => { if (e.target === settingsOverlay) closeSettings(); });
+
+    // ⌘, keyboard shortcut
+    document.addEventListener('keydown', (e) => { if (e.metaKey && e.key === ',') { e.preventDefault(); openSettings(); } });
+
+    async function loadSettings() {
+      try {
+        const s = await invoke('cmd_get_settings');
+        document.getElementById('settings-config-path').textContent = s.config_path;
+        // General: sync with existing app state
+        setSettingsToggle('settings-notifications', notifyOnCompletion);
+        setSettingsToggle('settings-cues', playCaptureCues);
+        setSettingsToggle('settings-hotkey', hotkeyEnabled);
+        // Populate hotkey shortcut dropdown from existing choices
+        const hkSettings = await invoke('cmd_global_hotkey_settings').catch(() => null);
+        const settingsHkSelect = document.getElementById('settings-hotkey-shortcut');
+        settingsHkSelect.replaceChildren();
+        if (hkSettings && hkSettings.choices) {
+          for (const choice of hkSettings.choices) {
+            const o = document.createElement('option'); o.value = choice.value; o.textContent = choice.label; settingsHkSelect.appendChild(o);
+          }
+          settingsHkSelect.value = hotkeyShortcut || hkSettings.shortcut || '';
+        }
+        document.getElementById('settings-hotkey-status').textContent = hotkeyEnabled ? 'Active' : 'Off';
+        document.getElementById('settings-whisper-model').value = s.transcription.model;
+        const dl = s.transcription.downloaded_models || [];
+        const selectedModel = s.transcription.model;
+        const isDownloaded = dl.includes(selectedModel);
+        document.getElementById('settings-model-status').textContent = isDownloaded
+          ? 'Downloaded: ' + dl.join(', ')
+          : dl.length ? 'Downloaded: ' + dl.join(', ') + '  •  "' + selectedModel + '" not yet downloaded' : 'No models downloaded yet.';
+        document.getElementById('btn-download-model').style.display = isDownloaded ? 'none' : '';
+        setSettingsToggle('settings-diarization', s.diarization.engine !== 'none'); // "auto" shows as On
+        document.getElementById('settings-summarization-engine').value = s.summarization.engine;
+        updateSumStatus(s);
+        // Agent command picker (visible when engine = "agent")
+        const agentCmdRow = document.getElementById('settings-agent-command-row');
+        agentCmdRow.style.display = s.summarization.engine === 'agent' ? '' : 'none';
+        const agentCmdSel = document.getElementById('settings-agent-command');
+        const sumAgents = await invoke('cmd_list_agents');
+        const currentCmd = s.summarization.agent_command || 'claude';
+        agentCmdSel.innerHTML = '';
+        for (const a of sumAgents) { const o = document.createElement('option'); o.value = a.name; o.textContent = a.name; agentCmdSel.appendChild(o); }
+        if (!sumAgents.find(a => a.name === currentCmd)) {
+          const o = document.createElement('option'); o.value = currentCmd; o.textContent = currentCmd + ' (custom)'; agentCmdSel.appendChild(o);
+        }
+        agentCmdSel.value = currentCmd;
+        document.getElementById('settings-agent-command-status').textContent = sumAgents.find(a => a.name === currentCmd) ? 'Installed' : 'Custom command';
+        setSettingsToggle('settings-screen-context', s.screen_context.enabled);
+        document.getElementById('settings-screen-interval-row').style.display = s.screen_context.enabled ? '' : 'none';
+        document.getElementById('settings-screen-interval').value = String(s.screen_context.interval_secs);
+        const agents = await invoke('cmd_list_agents');
+        const sel = document.getElementById('settings-agent');
+        sel.innerHTML = '';
+        for (const a of agents) { const o = document.createElement('option'); o.value = a.name; o.textContent = a.name; sel.appendChild(o); }
+        sel.value = s.assistant.agent;
+        document.getElementById('settings-agent-status').textContent = agents.length + ' agent(s) installed';
+        // Dictation settings
+        if (s.dictation) {
+          document.getElementById('settings-dictation-model').value = s.dictation.model || 'base';
+          setSettingsToggle('settings-dictation-daily-note', s.dictation.daily_note_log !== false);
+          document.getElementById('settings-dictation-silence').value = String(s.dictation.silence_timeout_ms || 2000);
+          // Restore saved hotkey keycode
+          const savedKeycode = s.dictation.hotkey_keycode || 57;
+          dictationKeycode = savedKeycode;
+          const keyName = dictationHotkeyLabel(savedKeycode);
+          if (hotkeyRecordBtn) {
+            hotkeyRecordBtn.textContent = keyName;
+          }
+        }
+        const dictationShortcutSettings = await invoke('cmd_dictation_shortcut_settings').catch(() => null);
+        const dictationShortcutSelect = document.getElementById('settings-dictation-shortcut-select');
+        dictationShortcutSelect.replaceChildren();
+        if (dictationShortcutSettings && dictationShortcutSettings.choices) {
+          for (const choice of dictationShortcutSettings.choices) {
+            const o = document.createElement('option');
+            o.value = choice.value;
+            o.textContent = choice.label;
+            dictationShortcutSelect.appendChild(o);
+          }
+          dictationShortcutSelect.value = s.dictation?.shortcut || dictationShortcutSettings.shortcut || '';
+          setSettingsToggle('settings-dictation-shortcut', Boolean(dictationShortcutSettings.enabled));
+          dictationShortcutActive = Boolean(dictationShortcutSettings.enabled);
+          dictationShortcutLabel = dictationShortcutSettings.enabled
+            ? `Dictate ${dictationShortcutSettings.shortcut}`
+            : 'Dictate';
+          renderDictationShortcutChip();
+          document.getElementById('settings-dictation-shortcut-status').textContent =
+            dictationShortcutSettings.enabled
+              ? `Active - ${dictationShortcutSettings.shortcut}`
+              : 'Uses the standard global shortcut system. Recommended for most users.';
+          if (s.dictation?.shortcut_enabled && !dictationShortcutSettings.enabled) {
+            const restored = await invoke('cmd_set_dictation_shortcut', {
+              enabled: true,
+              shortcut: s.dictation?.shortcut || dictationShortcutSettings.shortcut,
+            }).catch(() => null);
+            if (restored) {
+              setSettingsToggle('settings-dictation-shortcut', restored.enabled);
+              dictationShortcutActive = Boolean(restored.enabled);
+              dictationShortcutLabel = restored.enabled ? `Dictate ${restored.shortcut}` : 'Dictate';
+              renderDictationShortcutChip();
+              document.getElementById('settings-dictation-shortcut-status').textContent =
+                restored.enabled
+                  ? `Active - ${restored.shortcut}`
+                  : 'Uses the standard global shortcut system. Recommended for most users.';
+            }
+          }
+        }
+        const nativeDictationHotkey = await invoke('cmd_dictation_hotkey_status').catch(() => null);
+        if (nativeDictationHotkey) {
+          applyDictationHotkeyStatus(nativeDictationHotkey);
+          if (s.dictation?.hotkey_enabled && nativeDictationHotkey.state === 'disabled') {
+            const restored = await invoke('cmd_enable_dictation_hotkey', {
+              enabled: true,
+              keycode: dictationKeycode,
+            }).catch(() => null);
+            if (restored) {
+              applyDictationHotkeyStatus(restored);
+            }
+          }
+        }
+        loadStorageStats();
+        loadVaultStatus();
+      } catch (e) { console.error('loadSettings:', e); }
+    }
+
+    async function loadVaultStatus() {
+      try {
+        const v = await invoke('cmd_vault_status');
+        const detail = document.getElementById('vault-status-detail');
+        const setupBtn = document.getElementById('btn-vault-setup');
+        const unlinkRow = document.getElementById('vault-unlink-row');
+        const activePath = document.getElementById('vault-active-path');
+
+        if (v.enabled && v.status === 'healthy') {
+          detail.textContent = v.detail;
+          detail.style.color = 'var(--green)';
+          setupBtn.textContent = 'Reconfigure';
+          setupBtn.classList.remove('btn-primary');
+          setupBtn.classList.add('btn-secondary');
+          unlinkRow.style.display = '';
+          activePath.textContent = v.strategy + ': ' + v.path;
+        } else if (v.enabled) {
+          detail.textContent = v.detail;
+          detail.style.color = 'var(--yellow, #e8b339)';
+          setupBtn.textContent = 'Fix';
+          unlinkRow.style.display = '';
+          activePath.textContent = v.path;
+        } else {
+          detail.textContent = 'Not configured. Meetings stay in ~/meetings/ — connect a vault to see them in Obsidian.';
+          detail.style.color = '';
+          setupBtn.textContent = 'Set Up Vault';
+          setupBtn.classList.add('btn-primary');
+          setupBtn.classList.remove('btn-secondary');
+          unlinkRow.style.display = 'none';
+        }
+      } catch (e) { console.error('loadVaultStatus:', e); }
+    }
+
+    document.getElementById('btn-vault-setup').addEventListener('click', async () => {
+      try {
+        const { open } = window.__TAURI__.dialog || await import('@tauri-apps/plugin-dialog');
+        const selected = await open({ directory: true, title: 'Select your vault folder' });
+        if (!selected) return;
+
+        const btn = document.getElementById('btn-vault-setup');
+        btn.disabled = true;
+        btn.textContent = 'Configuring...';
+
+        const result = await invoke('cmd_vault_setup', { path: selected });
+        document.getElementById('vault-status-detail').textContent = result.detail;
+        document.getElementById('vault-status-detail').style.color = 'var(--green)';
+        loadVaultStatus();
+      } catch (e) {
+        document.getElementById('vault-status-detail').textContent = 'Error: ' + e;
+        document.getElementById('vault-status-detail').style.color = 'var(--red)';
+      } finally {
+        const btn = document.getElementById('btn-vault-setup');
+        btn.disabled = false;
+      }
+    });
+
+    document.getElementById('btn-vault-unlink').addEventListener('click', async () => {
+      try {
+        await invoke('cmd_vault_unlink');
+        loadVaultStatus();
+      } catch (e) {
+        console.error('vault unlink:', e);
+      }
+    });
+
+    function setSettingsToggle(id, on) { const b = document.getElementById(id); b.textContent = on ? 'On' : 'Off'; b.style.opacity = on ? '1' : '0.5'; }
+    function updateSumStatus(s) {
+      const el = document.getElementById('settings-summarization-status');
+      if (s.summarization.engine === 'none') el.textContent = '';
+      else if (s.summarization.engine === 'agent') el.textContent = 'Using: ' + (s.summarization.agent_command || 'claude') + ' — no API key needed, uses your existing subscription';
+      else if (s.summarization.engine === 'ollama') el.textContent = s.summarization.ollama_reachable ? 'Ollama reachable (' + s.summarization.ollama_model + ')' : 'Ollama not reachable at ' + s.summarization.ollama_url;
+      else if (s.summarization.engine === 'claude') el.textContent = s.summarization.anthropic_key_set ? 'API key set' : 'ANTHROPIC_API_KEY not found in environment';
+      else if (s.summarization.engine === 'openai') el.textContent = s.summarization.openai_key_set ? 'API key set' : 'OPENAI_API_KEY not found in environment';
+    }
+    async function loadStorageStats() {
+      try {
+        const st = await invoke('cmd_get_storage_stats');
+        const f = (b) => b > 1073741824 ? (b/1073741824).toFixed(1)+' GB' : b > 1048576 ? (b/1048576).toFixed(0)+' MB' : (b/1024).toFixed(0)+' KB';
+        document.getElementById('settings-storage-info').textContent =
+          'Meetings: '+f(st.meetings.bytes)+' ('+st.meetings.count+' files)  •  Memos: '+f(st.memos.bytes)+' ('+st.memos.count+')  •  Models: '+f(st.models.bytes)+'  •  Screenshots: '+f(st.screens.bytes)+'  •  Total: '+f(st.total_bytes);
+      } catch(e) { document.getElementById('settings-storage-info').textContent = 'Could not load.'; }
+    }
+    // Settings General handlers — delegate to existing app logic
+    document.getElementById('settings-notifications').addEventListener('click', async () => {
+      const next = !notifyOnCompletion;
+      try { await invoke('cmd_set_completion_notifications', { enabled: next }); setNotificationToggle(next); setSettingsToggle('settings-notifications', next); } catch(e) { console.error(e); }
+    });
+    document.getElementById('settings-cues').addEventListener('click', () => {
+      setCueToggle(!playCaptureCues);
+      setSettingsToggle('settings-cues', playCaptureCues);
+    });
+    document.getElementById('settings-hotkey').addEventListener('click', async () => {
+      const shortcut = document.getElementById('settings-hotkey-shortcut').value || hotkeyShortcut;
+      await syncHotkey(!hotkeyEnabled, shortcut);
+      setSettingsToggle('settings-hotkey', hotkeyEnabled);
+      document.getElementById('settings-hotkey-status').textContent = hotkeyEnabled ? 'Active' : 'Off';
+    });
+    document.getElementById('settings-hotkey-shortcut').addEventListener('change', async () => {
+      const shortcut = document.getElementById('settings-hotkey-shortcut').value;
+      await syncHotkey(hotkeyEnabled, shortcut);
+      setSettingsToggle('settings-hotkey', hotkeyEnabled);
+      document.getElementById('settings-hotkey-status').textContent = hotkeyEnabled ? 'Active' : 'Off';
+    });
+
+    // Settings change handlers
+    document.getElementById('settings-whisper-model').addEventListener('change', async (e) => {
+      await invoke('cmd_set_setting', {section:'transcription',key:'model',value:e.target.value});
+      const s = await invoke('cmd_get_settings');
+      const dl = s.transcription.downloaded_models || [];
+      const isDownloaded = dl.includes(e.target.value);
+      document.getElementById('settings-model-status').textContent = isDownloaded
+        ? 'Downloaded: ' + dl.join(', ')
+        : dl.length ? 'Downloaded: ' + dl.join(', ') + '  •  "' + e.target.value + '" not yet downloaded' : 'No models downloaded yet.';
+      document.getElementById('btn-download-model').style.display = isDownloaded ? 'none' : '';
+    });
+    document.getElementById('btn-download-model').addEventListener('click', async () => {
+      const model = document.getElementById('settings-whisper-model').value;
+      const btn = document.getElementById('btn-download-model');
+      const status = document.getElementById('settings-model-status');
+      btn.disabled = true;
+      btn.textContent = 'Downloading...';
+      status.textContent = 'Downloading ' + model + '... this may take a minute.';
+      try {
+        const result = await invoke('cmd_download_model', { model });
+        status.textContent = result;
+        btn.style.display = 'none';
+      } catch (e) {
+        status.textContent = 'Download failed: ' + e;
+      }
+      btn.disabled = false;
+      btn.textContent = 'Download';
+    });
+    document.getElementById('settings-diarization').addEventListener('click', async () => {
+      const s = await invoke('cmd_get_settings');
+      // Toggle: none → pyannote-rs, anything else (auto/pyannote-rs/pyannote) → none
+      const next = s.diarization.engine==='none'?'pyannote-rs':'none';
+      await invoke('cmd_set_setting', {section:'diarization',key:'engine',value:next});
+      setSettingsToggle('settings-diarization', next!=='none');
+    });
+    document.getElementById('settings-summarization-engine').addEventListener('change', async (e) => {
+      await invoke('cmd_set_setting', {section:'summarization',key:'engine',value:e.target.value});
+      document.getElementById('settings-agent-command-row').style.display = e.target.value === 'agent' ? '' : 'none';
+      const s = await invoke('cmd_get_settings'); updateSumStatus(s);
+    });
+    document.getElementById('settings-agent-command').addEventListener('change', async (e) => {
+      await invoke('cmd_set_setting', {section:'summarization',key:'agent_command',value:e.target.value});
+      const agents = await invoke('cmd_list_agents');
+      document.getElementById('settings-agent-command-status').textContent = agents.find(a => a.name === e.target.value) ? 'Installed' : 'Not found on this machine';
+    });
+    document.getElementById('settings-screen-context').addEventListener('click', async () => {
+      const s = await invoke('cmd_get_settings');
+      const next = !s.screen_context.enabled;
+      await invoke('cmd_set_setting', {section:'screen_context',key:'enabled',value:String(next)});
+      setSettingsToggle('settings-screen-context', next);
+      document.getElementById('settings-screen-interval-row').style.display = next ? '' : 'none';
+    });
+    document.getElementById('settings-screen-interval').addEventListener('change', (e) => invoke('cmd_set_setting', {section:'screen_context',key:'interval_secs',value:e.target.value}));
+    document.getElementById('settings-agent').addEventListener('change', (e) => invoke('cmd_set_setting', {section:'assistant',key:'agent',value:e.target.value}));
+
+    // Dictation settings handlers
+    document.getElementById('settings-dictation-shortcut').addEventListener('click', async () => {
+      const select = document.getElementById('settings-dictation-shortcut-select');
+      const currentEnabled = document.getElementById('settings-dictation-shortcut').textContent === 'On';
+      try {
+        const settings = await invoke('cmd_set_dictation_shortcut', {
+          enabled: !currentEnabled,
+          shortcut: select.value,
+        });
+        setSettingsToggle('settings-dictation-shortcut', settings.enabled);
+        dictationShortcutActive = Boolean(settings.enabled);
+        dictationShortcutLabel = settings.enabled ? `Dictate ${settings.shortcut}` : 'Dictate';
+        renderDictationShortcutChip();
+        document.getElementById('settings-dictation-shortcut-status').textContent =
+          settings.enabled
+            ? `Active - ${settings.shortcut}`
+            : 'Uses the standard global shortcut system. Recommended for most users.';
+      } catch (e) {
+        document.getElementById('settings-dictation-shortcut-status').textContent = String(e);
+      }
+    });
+    document.getElementById('settings-dictation-shortcut-select').addEventListener('change', async (e) => {
+      const button = document.getElementById('settings-dictation-shortcut');
+      const enabled = button.textContent === 'On';
+      if (!enabled) {
+        await invoke('cmd_set_setting', {section:'dictation',key:'shortcut',value:e.target.value});
+        document.getElementById('settings-dictation-shortcut-status').textContent = `${e.target.value} saved. Toggle the standard shortcut on when you're ready to use it.`;
+        return;
+      }
+      try {
+        const settings = await invoke('cmd_set_dictation_shortcut', {
+          enabled: true,
+          shortcut: e.target.value,
+        });
+        setSettingsToggle('settings-dictation-shortcut', settings.enabled);
+        dictationShortcutActive = Boolean(settings.enabled);
+        dictationShortcutLabel = settings.enabled ? `Dictate ${settings.shortcut}` : 'Dictate';
+        renderDictationShortcutChip();
+        document.getElementById('settings-dictation-shortcut-status').textContent = `Active - ${settings.shortcut}`;
+      } catch (e2) {
+        document.getElementById('settings-dictation-shortcut-status').textContent = String(e2);
+      }
+    });
+    document.getElementById('settings-dictation-model').addEventListener('change', (e) => invoke('cmd_set_setting', {section:'dictation',key:'model',value:e.target.value}));
+    document.getElementById('settings-dictation-silence').addEventListener('change', (e) => invoke('cmd_set_setting', {section:'dictation',key:'silence_timeout_ms',value:e.target.value}));
+    document.getElementById('settings-dictation-daily-note').addEventListener('click', async () => {
+      const btn = document.getElementById('settings-dictation-daily-note');
+      const next = btn.textContent !== 'On';
+      await invoke('cmd_set_setting', {section:'dictation',key:'daily_note_log',value:String(next)});
+      setSettingsToggle('settings-dictation-daily-note', next);
+    });
+
+    // ── Live transcript shortcut settings ──
+    document.getElementById('settings-live-shortcut').addEventListener('click', async () => {
+      const select = document.getElementById('settings-live-shortcut-select');
+      const currentEnabled = document.getElementById('settings-live-shortcut').textContent === 'On';
+      try {
+        const settings = await invoke('cmd_set_live_shortcut', {
+          enabled: !currentEnabled,
+          shortcut: select.value,
+        });
+        setSettingsToggle('settings-live-shortcut', settings.enabled);
+      } catch (e) {
+        console.error('Live shortcut:', e);
+      }
+    });
+    document.getElementById('settings-live-shortcut-select').addEventListener('change', async (e) => {
+      const enabled = document.getElementById('settings-live-shortcut').textContent === 'On';
+      if (!enabled) return;
+      try {
+        const settings = await invoke('cmd_set_live_shortcut', {
+          enabled: true,
+          shortcut: e.target.value,
+        });
+        setSettingsToggle('settings-live-shortcut', settings.enabled);
+      } catch (e2) {
+        console.error('Live shortcut change:', e2);
+      }
+    });
+    // Load initial live shortcut state
+    invoke('cmd_live_shortcut_settings').then(settings => {
+      setSettingsToggle('settings-live-shortcut', settings.enabled);
+      const select = document.getElementById('settings-live-shortcut-select');
+      if (select) select.value = settings.shortcut;
+    }).catch(() => {});
+    // Dictation hotkey — "press to record" key capture
+    const KEYCODE_NAMES = {
+      0: 'A', 1: 'S', 2: 'D', 3: 'F', 4: 'H', 5: 'G', 6: 'Z', 7: 'X', 8: 'C', 9: 'V',
+      11: 'B', 12: 'Q', 13: 'W', 14: 'E', 15: 'R', 16: 'Y', 17: 'T',
+      18: '1', 19: '2', 20: '3', 21: '4', 22: '6', 23: '5', 24: '=', 25: '9',
+      26: '7', 27: '-', 28: '8', 29: '0', 30: ']', 31: 'O', 32: 'U', 33: '[',
+      34: 'I', 35: 'P', 36: 'Return', 37: 'L', 38: 'J', 39: "'", 40: 'K', 41: ';',
+      42: '\\', 43: ',', 44: '/', 45: 'N', 46: 'M', 47: '.', 48: 'Tab', 49: 'Space',
+      50: '`', 51: 'Delete', 53: 'Escape', 57: 'Caps Lock', 63: 'fn',
+      79: 'F18', 80: 'F19', 96: 'F5', 97: 'F6', 98: 'F7', 99: 'F3',
+      100: 'F8', 101: 'F9', 103: 'F11', 105: 'F13', 106: 'F16', 107: 'F14',
+      109: 'F10', 111: 'F12', 113: 'F15', 114: 'Help', 115: 'Home', 116: 'Page Up',
+      117: 'Forward Delete', 118: 'F4', 119: 'End', 120: 'F2', 121: 'Page Down',
+      122: 'F1', 123: 'Left Arrow', 124: 'Right Arrow', 125: 'Down Arrow', 126: 'Up Arrow',
+    };
+    const BROWSER_CODE_TO_MAC = {
+      KeyA: 0, KeyS: 1, KeyD: 2, KeyF: 3, KeyH: 4, KeyG: 5, KeyZ: 6, KeyX: 7, KeyC: 8, KeyV: 9,
+      KeyB: 11, KeyQ: 12, KeyW: 13, KeyE: 14, KeyR: 15, KeyY: 16, KeyT: 17,
+      Digit1: 18, Digit2: 19, Digit3: 20, Digit4: 21, Digit6: 22, Digit5: 23, Equal: 24, Digit9: 25,
+      Digit7: 26, Minus: 27, Digit8: 28, Digit0: 29, BracketRight: 30, KeyO: 31, KeyU: 32, BracketLeft: 33,
+      KeyI: 34, KeyP: 35, Enter: 36, NumpadEnter: 76, KeyL: 37, KeyJ: 38, Quote: 39, KeyK: 40, Semicolon: 41,
+      Backslash: 42, Comma: 43, Slash: 44, KeyN: 45, KeyM: 46, Period: 47, Tab: 48, Space: 49,
+      Backquote: 50, Backspace: 51, Escape: 53, CapsLock: 57,
+      F1: 122, F2: 120, F3: 99, F4: 118, F5: 96, F6: 97, F7: 98, F8: 100, F9: 101, F10: 109,
+      F11: 103, F12: 111, F13: 105, F14: 107, F15: 113, F16: 106, F18: 79, F19: 80,
+      Home: 115, End: 119, PageUp: 116, PageDown: 121, Delete: 117,
+      ArrowLeft: 123, ArrowRight: 124, ArrowDown: 125, ArrowUp: 126,
+    };
+    const BROWSER_KEY_TO_MAC = {
+      CapsLock: 57, 'Caps Lock': 57, Fn: 63, fn: 63,
+      Backspace: 51, Delete: 117, Escape: 53, Esc: 53, Tab: 48, ' ': 49, Space: 49,
+      Enter: 36, Return: 36,
+      ArrowLeft: 123, ArrowRight: 124, ArrowDown: 125, ArrowUp: 126,
+      Home: 115, End: 119, PageUp: 116, PageDown: 121,
+      F1: 122, F2: 120, F3: 99, F4: 118, F5: 96, F6: 97, F7: 98, F8: 100,
+      F9: 101, F10: 109, F11: 103, F12: 111, F13: 105, F14: 107, F15: 113, F16: 106,
+      F18: 79, F19: 80,
+    };
+    const LEGACY_KEYCODE_TO_MAC = {
+      8: 51, 9: 48, 13: 36, 20: 57, 27: 53, 32: 49,
+      33: 116, 34: 121, 35: 119, 36: 115,
+      37: 123, 38: 126, 39: 124, 40: 125,
+      112: 122, 113: 120, 114: 99, 115: 118, 116: 96, 117: 97, 118: 98, 119: 100,
+      120: 101, 121: 109, 122: 103, 123: 111,
+      144: 63,
+    };
+    let dictationKeycode = 57; // default: Caps Lock
+    let dictationHotkeyEnabled = false;
+    let dictationHotkeyPending = false;
+    let dictationHotkeyStartupTimer = null;
+
+    const hotkeyRecordBtn = document.getElementById('settings-dictation-hotkey-record');
+    let isRecordingHotkey = false;
+
+    function dictationHotkeyLabel(keycode) {
+      return KEYCODE_NAMES[keycode] || `Key ${keycode}`;
+    }
+
+    function eventToMacKeycode(e) {
+      if (typeof BROWSER_CODE_TO_MAC[e.code] === 'number') {
+        return BROWSER_CODE_TO_MAC[e.code];
+      }
+      if (typeof BROWSER_KEY_TO_MAC[e.key] === 'number') {
+        return BROWSER_KEY_TO_MAC[e.key];
+      }
+      const legacy = e.keyCode ?? e.which;
+      if (typeof LEGACY_KEYCODE_TO_MAC[legacy] === 'number') {
+        return LEGACY_KEYCODE_TO_MAC[legacy];
+      }
+      return null;
+    }
+
+    function clearDictationHotkeyStartupTimer() {
+      if (dictationHotkeyStartupTimer) {
+        clearTimeout(dictationHotkeyStartupTimer);
+        dictationHotkeyStartupTimer = null;
+      }
+    }
+
+    function scheduleDictationHotkeyStartupTimer() {
+      clearDictationHotkeyStartupTimer();
+      dictationHotkeyStartupTimer = setTimeout(() => {
+        if (!dictationHotkeyPending) return;
+        applyDictationHotkeyStatus({
+          state: 'failed',
+          enabled: false,
+          pending: false,
+          keycode: dictationKeycode,
+          message: 'Minutes is still waiting for macOS to start the native hotkey. Confirm Minutes is enabled in System Settings > Privacy & Security > Input Monitoring, then try again.',
+        });
+      }, 4000);
+    }
+
+    function applyDictationHotkeyStatus(status) {
+      if (!status) return;
+      clearDictationHotkeyStartupTimer();
+
+      if (typeof status.keycode === 'number') {
+        dictationKeycode = status.keycode;
+      }
+
+      dictationHotkeyEnabled = Boolean(status.enabled);
+      dictationHotkeyPending = Boolean(status.pending);
+
+      const toggleBtn = document.getElementById('settings-dictation-hotkey');
+      const statusEl = document.getElementById('settings-dictation-hotkey-status');
+
+      if (hotkeyRecordBtn) {
+        hotkeyRecordBtn.textContent = dictationHotkeyLabel(dictationKeycode);
+        hotkeyRecordBtn.style.borderColor = '';
+        hotkeyRecordBtn.style.color = '';
+      }
+
+      if (dictationHotkeyPending) {
+        toggleBtn.disabled = false;
+        if (hotkeyRecordBtn) {
+          hotkeyRecordBtn.disabled = false;
+          hotkeyRecordBtn.style.opacity = '';
+        }
+        toggleBtn.textContent = 'Starting...';
+        toggleBtn.style.opacity = '0.85';
+        statusEl.style.color = '';
+        statusEl.textContent = `Starting ${dictationHotkeyLabel(dictationKeycode)}. If this stalls, re-check Input Monitoring and try again.`;
+        scheduleDictationHotkeyStartupTimer();
+        return;
+      }
+
+      toggleBtn.style.opacity = '';
+      setSettingsToggle('settings-dictation-hotkey', dictationHotkeyEnabled);
+
+      if (status.state === 'failed') {
+        toggleBtn.disabled = false;
+        if (hotkeyRecordBtn) {
+          hotkeyRecordBtn.disabled = false;
+          hotkeyRecordBtn.style.opacity = '';
+        }
+        statusEl.style.color = 'var(--red)';
+        statusEl.textContent = status.message || 'Could not start the native dictation hotkey.';
+      } else if (status.state === 'active') {
+        toggleBtn.disabled = false;
+        if (hotkeyRecordBtn) {
+          hotkeyRecordBtn.disabled = false;
+          hotkeyRecordBtn.style.opacity = '';
+        }
+        statusEl.style.color = '';
+        statusEl.textContent = `Active - hold ${dictationHotkeyLabel(dictationKeycode)} to dictate, or tap it to lock and tap again to stop`;
+      } else if (status.state === 'unsupported') {
+        toggleBtn.disabled = true;
+        toggleBtn.textContent = 'N/A';
+        toggleBtn.style.opacity = '0.5';
+        if (hotkeyRecordBtn) {
+          hotkeyRecordBtn.disabled = true;
+          hotkeyRecordBtn.style.opacity = '0.5';
+        }
+        statusEl.style.color = 'var(--text-secondary)';
+        statusEl.textContent = status.message || 'Native dictation hotkey is currently available on macOS only.';
+      } else {
+        toggleBtn.disabled = false;
+        if (hotkeyRecordBtn) {
+          hotkeyRecordBtn.disabled = false;
+          hotkeyRecordBtn.style.opacity = '';
+        }
+        statusEl.style.color = '';
+        statusEl.textContent = 'Hold the selected key to dictate, or tap to lock and tap again to stop. Requires Input Monitoring permission.';
+      }
+    }
+
+    if (hotkeyRecordBtn) hotkeyRecordBtn.addEventListener('click', () => {
+      if (isRecordingHotkey) return;
+      isRecordingHotkey = true;
+      hotkeyRecordBtn.textContent = 'Press any key...';
+      hotkeyRecordBtn.style.borderColor = 'var(--accent)';
+      hotkeyRecordBtn.style.color = 'var(--accent)';
+
+      async function persistDictationHotkeySelection(macKeycode) {
+        await invoke('cmd_set_setting', {
+          section: 'dictation',
+          key: 'hotkey_keycode',
+          value: String(macKeycode),
+        });
+      }
+
+      function cleanupCaptureListeners() {
+        document.removeEventListener('keydown', captureKey, true);
+        document.removeEventListener('keyup', captureKey, true);
+      }
+
+      async function captureKey(e) {
+        e.preventDefault();
+        e.stopPropagation();
+        cleanupCaptureListeners();
+        isRecordingHotkey = false;
+
+        const macKeycode = eventToMacKeycode(e);
+        if (typeof macKeycode !== 'number') {
+          hotkeyRecordBtn.textContent = dictationHotkeyLabel(dictationKeycode);
+          hotkeyRecordBtn.style.borderColor = '';
+          hotkeyRecordBtn.style.color = '';
+          const status = document.getElementById('settings-dictation-hotkey-status');
+          status.style.color = 'var(--red)';
+          status.textContent = `Minutes cannot bind ${e.key || e.code} yet. Try a letter, number, function key, arrow key, Tab, Escape, Return, Space, or Delete.`;
+          return;
+        }
+
+        dictationKeycode = macKeycode;
+
+        const name = dictationHotkeyLabel(macKeycode);
+        hotkeyRecordBtn.textContent = name;
+        hotkeyRecordBtn.style.borderColor = '';
+        hotkeyRecordBtn.style.color = '';
+
+        try {
+          await persistDictationHotkeySelection(macKeycode);
+        } catch (error) {
+          console.error('Save dictation hotkey:', error);
+          const status = document.getElementById('settings-dictation-hotkey-status');
+          status.style.color = 'var(--red)';
+          status.textContent = `Minutes couldn't save ${name} as the dictation hotkey.`;
+          return;
+        }
+
+        // If hotkey is enabled, restart with new key
+        if (dictationHotkeyEnabled || dictationHotkeyPending) {
+          invoke('cmd_enable_dictation_hotkey', { enabled: true, keycode: macKeycode })
+            .then((status) => applyDictationHotkeyStatus(status))
+            .catch((error) => {
+              applyDictationHotkeyStatus({
+                state: 'failed',
+                enabled: false,
+                pending: false,
+                keycode: macKeycode,
+                message: String(error),
+              });
+            });
+        } else {
+          const status = document.getElementById('settings-dictation-hotkey-status');
+          status.style.color = '';
+          status.textContent = `${name} saved. Toggle the dictation hotkey on when you're ready to use it.`;
+        }
+      }
+
+      document.addEventListener('keydown', captureKey, true);
+      document.addEventListener('keyup', captureKey, true);
+    });
+
+    document.getElementById('settings-dictation-hotkey').addEventListener('click', async () => {
+      const next = !(dictationHotkeyEnabled || dictationHotkeyPending);
+      try {
+        const status = await invoke('cmd_enable_dictation_hotkey', { enabled: next, keycode: dictationKeycode });
+        await invoke('cmd_set_setting', {
+          section: 'dictation',
+          key: 'hotkey_enabled',
+          value: String(status.enabled || status.pending),
+        });
+        applyDictationHotkeyStatus(status);
+      } catch (e) {
+        await invoke('cmd_set_setting', {
+          section: 'dictation',
+          key: 'hotkey_enabled',
+          value: 'false',
+        }).catch(() => {});
+        applyDictationHotkeyStatus({
+          state: 'failed',
+          enabled: false,
+          pending: false,
+          keycode: dictationKeycode,
+          message: String(e),
+        });
+      }
+    });
+
+    document.getElementById('settings-screen-share').addEventListener('click', () => {
+      const b = document.getElementById('settings-screen-share');
+      setSettingsToggle('settings-screen-share', b.textContent!=='On');
+    });
+    notificationToggle.addEventListener('click', async () => {
+      const next = !notifyOnCompletion;
+      try {
+        await invoke('cmd_set_completion_notifications', { enabled: next });
+        setNotificationToggle(next);
+      } catch (e) {
+        console.error('Set notifications:', e);
+      }
+    });
+    document.addEventListener('keydown', (e) => {
+      // Cmd+Shift+R toggles Recall panel (handler defined in Recall section below)
+      if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === 'r') {
+        e.preventDefault();
+        if (typeof toggleRecallPanel === 'function') toggleRecallPanel();
+        return;
+      }
+      if (e.key === 'Escape' && aboutOverlay.classList.contains('active')) {
+        closeAbout();
+      }
+      if (e.key === 'Escape' && settingsOverlay.classList.contains('active')) {
+        closeSettings();
+      }
+      if (e.key === 'Escape' && readinessOverlay.classList.contains('active')) {
+        closeReadiness();
+      }
+      if (e.key === 'Escape' && recoveryOverlay.classList.contains('active')) {
+        closeRecovery();
+      }
+      if (e.key === 'Escape' && detailOverlay.classList.contains('active')) {
+        closeDetailView();
+      }
+    });
+    openExternalBtn.addEventListener('click', async () => {
+      if (!currentMeetingPath) return;
+      try {
+        await invoke('cmd_open_file', { path: currentMeetingPath });
+      } catch (e) {
+        console.error('Open external:', e);
+      }
+    });
+
+    // ══════════════════════════════════════════════════════════════
+    // ── Recall panel ──
+    // ══════════════════════════════════════════════════════════════
+
+    const { getCurrentWindow } = window.__TAURI__.window;
+    const currentWindow = getCurrentWindow();
+
+    const recallPanel = document.getElementById('recall-panel');
+    const recallDot = document.getElementById('recall-dot');
+    const recallPhaseLabel = document.getElementById('recall-phase-label');
+    const recallContextLabel = document.getElementById('recall-context-label');
+    const recallTerminalContainer = document.getElementById('recall-terminal-container');
+    const recallLoading = document.getElementById('recall-loading');
+    const recallNote = document.getElementById('recall-note');
+    const recallNoteInput = document.getElementById('recall-note-input');
+    const recallExitBanner = document.getElementById('recall-exit-banner');
+    const recallNudge = document.getElementById('recall-nudge');
+    const recallEndBtn = document.getElementById('btn-recall-end');
+    const assistantBtn = document.getElementById('btn-assistant');
+
+    const COLLAPSED_WIDTH = 480;
+    const EXPANDED_WIDTH = 960;
+    const SESSION_ID = 'assistant';
+
+    let recallExpanded = false;
+    let recallTerminal = null;
+    let recallFitAddon = null;
+    let recallPtyAlive = false;
+    let recallPhase = 'recall';
+    let userExplicitlyCollapsed = false;
+    let recallInitialized = false;
+    let expandAnimating = false;
+
+    // ── Phase management ──
+    function setRecallPhase(phase, context) {
+      recallPhase = phase;
+      const dotClasses = ['prep', 'listening', 'debrief'];
+      recallDot.classList.remove(...dotClasses);
+      recallPhaseLabel.classList.remove(...dotClasses);
+      if (phase !== 'recall') {
+        recallDot.classList.add(phase);
+        recallPhaseLabel.classList.add(phase);
+      }
+      const labels = { recall: 'Recall', prep: 'Prep', listening: 'Listening', debrief: 'Debrief' };
+      recallPhaseLabel.textContent = labels[phase] || 'Recall';
+      recallContextLabel.textContent = context ? `\u2014 ${context}` : '';
+      recallDot.setAttribute('aria-label', 'Phase: ' + (labels[phase] || 'Recall'));
+
+      recallTerminalContainer.classList.toggle('dimmed', phase === 'listening');
+      recallNote.classList.toggle('active', phase === 'listening');
+    }
+
+    // ── xterm.js initialization ──
+    function initRecallTerminal() {
+      if (recallInitialized) return;
+      recallInitialized = true;
+
+      recallTerminal = new Terminal({
+        theme: window.MINUTES_XTERM_THEME,
+        fontFamily: "'SF Mono', Menlo, monospace",
+        fontSize: 13,
+        lineHeight: 1.2,
+        cursorBlink: true,
+        cursorStyle: 'bar',
+        scrollback: 10000,
+        allowProposedApi: true,
+      });
+
+      recallFitAddon = new FitAddon.FitAddon();
+      recallTerminal.loadAddon(recallFitAddon);
+      recallTerminal.open(recallTerminalContainer);
+
+      let fitTimeout;
+      const resizeObserver = new ResizeObserver(() => {
+        if (!recallExpanded) return;
+        clearTimeout(fitTimeout);
+        fitTimeout = setTimeout(() => {
+          recallFitAddon.fit();
+          if (recallPtyAlive) {
+            invoke('cmd_pty_resize', {
+              sessionId: SESSION_ID,
+              cols: recallTerminal.cols,
+              rows: recallTerminal.rows,
+            }).catch(() => {});
+          }
+        }, 100);
+      });
+      resizeObserver.observe(recallTerminalContainer);
+
+      recallTerminal.onData((data) => {
+        if (!recallPtyAlive) return;
+        invoke('cmd_pty_input', { sessionId: SESSION_ID, data }).catch(console.error);
+      });
+    }
+
+    // ── PTY event listeners (registered once) ──
+    let ptyListenersRegistered = false;
+    async function registerPtyListeners() {
+      if (ptyListenersRegistered) return;
+      ptyListenersRegistered = true;
+
+      await currentWindow.listen('pty:data:' + SESSION_ID, (event) => {
+        if (!recallTerminal) return;
+        const raw = atob(event.payload);
+        const bytes = new Uint8Array(raw.length);
+        for (let i = 0; i < raw.length; i++) {
+          bytes[i] = raw.charCodeAt(i);
+        }
+        recallTerminal.write(bytes);
+        const wasHidden = recallTerminalContainer.style.display === 'none';
+        recallLoading.style.display = 'none';
+        recallTerminalContainer.style.display = '';
+        // Re-fit after first reveal so xterm measures the real container width
+        if (wasHidden && recallFitAddon) {
+          requestAnimationFrame(() => recallFitAddon.fit());
+        }
+      });
+
+      await currentWindow.listen('pty:exit:' + SESSION_ID, () => {
+        recallPtyAlive = false;
+        recallExitBanner.classList.add('active');
+        recallEndBtn.style.display = 'none';
+      });
+    }
+
+    // ── Expand / collapse with window resize ──
+    async function expandRecallPanel() {
+      if (recallExpanded || expandAnimating) return;
+      expandAnimating = true;
+      userExplicitlyCollapsed = false;
+      recallNudge.classList.remove('active');
+
+      try {
+        // outerPosition() returns physical pixels; convert to logical
+        // so setPosition(LogicalPosition) doesn't shift on Retina displays.
+        const scaleFactor = await currentWindow.scaleFactor();
+        const pos = await currentWindow.outerPosition();
+        const logicalX = pos.x / scaleFactor;
+        const logicalY = pos.y / scaleFactor;
+        const screenWidth = window.screen.availWidth;
+        const newRight = logicalX + EXPANDED_WIDTH;
+        if (newRight > screenWidth) {
+          const shiftX = Math.max(0, logicalX - (newRight - screenWidth));
+          await currentWindow.setPosition(new window.__TAURI__.window.LogicalPosition(shiftX, logicalY));
+        }
+      } catch (e) {
+        console.error('Screen edge check:', e);
+      }
+
+      await currentWindow.setSize(
+        new window.__TAURI__.window.LogicalSize(EXPANDED_WIDTH, 640)
+      );
+
+      recallPanel.classList.add('expanded');
+      assistantBtn.setAttribute('aria-expanded', 'true');
+      recallExpanded = true;
+      expandAnimating = false;
+
+      localStorage.setItem('minutes.recallExpanded', 'true');
+
+      initRecallTerminal();
+      await registerPtyListeners();
+
+      setTimeout(() => {
+        if (recallFitAddon) recallFitAddon.fit();
+        if (recallTerminal) recallTerminal.focus();
+      }, 260);
+    }
+
+    async function collapseRecallPanel() {
+      if (!recallExpanded || expandAnimating) return;
+      expandAnimating = true;
+
+      recallPanel.classList.remove('expanded');
+      assistantBtn.setAttribute('aria-expanded', 'false');
+
+      setTimeout(async () => {
+        await currentWindow.setSize(
+          new window.__TAURI__.window.LogicalSize(COLLAPSED_WIDTH, 640)
+        );
+        recallExpanded = false;
+        expandAnimating = false;
+        localStorage.setItem('minutes.recallExpanded', 'false');
+      }, 120);
+    }
+
+    async function toggleRecallPanel() {
+      if (recallExpanded) {
+        userExplicitlyCollapsed = true;
+        await collapseRecallPanel();
+      } else {
+        await openRecall('assistant');
+      }
+    }
+
+    // ── Open Recall (spawn PTY if needed, then expand) ──
+    async function openRecall(mode, meetingPath) {
+      recallLoading.style.display = 'flex';
+      recallTerminalContainer.style.display = 'none';
+      recallExitBanner.classList.remove('active');
+
+      await expandRecallPanel();
+
+      try {
+        const opts = { mode };
+        if (meetingPath) opts.meetingPath = meetingPath;
+        await invoke('cmd_spawn_terminal', opts);
+        recallPtyAlive = true;
+        recallEndBtn.style.display = '';
+      } catch (e) {
+        const msg = typeof e === 'string' ? e : String(e);
+        if (msg.includes('already running') || msg.includes('Already')) {
+          recallPtyAlive = true;
+          recallLoading.style.display = 'none';
+          recallTerminalContainer.style.display = '';
+          recallEndBtn.style.display = '';
+          // Re-fit after reveal so xterm uses the full panel width
+          if (recallFitAddon) {
+            requestAnimationFrame(() => {
+              recallFitAddon.fit();
+              if (recallPtyAlive && recallTerminal) {
+                invoke('cmd_pty_resize', {
+                  sessionId: SESSION_ID,
+                  cols: recallTerminal.cols,
+                  rows: recallTerminal.rows,
+                }).catch(() => {});
+              }
+            });
+          }
+        } else {
+          console.error('Recall spawn:', e);
+          recallLoading.querySelector('span').textContent = 'Could not start: ' + msg;
+        }
+      }
+    }
+
+    // ── Auto-expand triggers ──
+    function autoExpandRecall(mode, context) {
+      if (userExplicitlyCollapsed) {
+        recallNudge.classList.add('active');
+        return;
+      }
+      openRecall(mode === 'debrief' ? 'assistant' : mode);
+      if (mode === 'prep') setRecallPhase('prep', context);
+      else if (mode === 'debrief') setRecallPhase('debrief', context);
+    }
+
+    // ── Call detection banner ──
+    const callBanner = document.getElementById('call-detected-banner');
+    const callTitle = document.getElementById('call-detected-title');
+    let callBannerTimeout = null;
+
+    currentWindow.listen('call:detected', (event) => {
+      const { app_name } = event.payload;
+      callTitle.textContent = `${app_name} call detected`;
+      callBanner.classList.add('active');
+
+      // Show the main window so user sees the banner
+      currentWindow.show();
+      currentWindow.setFocus();
+
+      // Auto-dismiss after 30s
+      clearTimeout(callBannerTimeout);
+      callBannerTimeout = setTimeout(() => {
+        callBanner.classList.remove('active');
+      }, 30000);
+    });
+
+    document.getElementById('btn-record-call').addEventListener('click', async () => {
+      callBanner.classList.remove('active');
+      clearTimeout(callBannerTimeout);
+      // Start recording via the existing record button handler
+      document.getElementById('btn-record').click();
+    });
+
+    document.getElementById('btn-dismiss-call').addEventListener('click', () => {
+      callBanner.classList.remove('active');
+      clearTimeout(callBannerTimeout);
+    });
+
+    currentWindow.listen('dictation-hotkey:status', (event) => {
+      applyDictationHotkeyStatus(event.payload);
+    });
+
+    // ── Listen for live transcript events (T6: immediate UI feedback) ──
+    currentWindow.listen('live-transcript:started', () => {
+      isLiveTranscript = true;
+      liveBar.classList.add('active');
+      footer.style.display = 'none';
+      statusPill.className = 'status-pill live';
+      statusPill.textContent = 'live';
+      startFastPoll();
+      playCue('start');
+    });
+
+    currentWindow.listen('live-transcript:stopped', (event) => {
+      isLiveTranscript = false;
+      liveBar.classList.remove('active');
+      footer.style.display = '';
+      statusPill.className = 'status-pill';
+      statusPill.textContent = 'idle';
+      stopFastPoll();
+      loadMeetings();
+      playCue('stop');
+    });
+
+    currentWindow.listen('live-transcript:error', (event) => {
+      isLiveTranscript = false;
+      liveBar.classList.remove('active');
+      footer.style.display = '';
+      statusPill.className = 'status-pill';
+      statusPill.textContent = 'idle';
+      stopFastPoll();
+      const errMsg = event.payload?.error || 'Unknown error';
+      console.error('[live-transcript] error:', errMsg);
+      // Show visible error to user
+      const noticeIcon = document.getElementById('output-notice-icon');
+      const noticeTitle = document.getElementById('output-notice-title');
+      const noticeDetail = document.getElementById('output-notice-detail');
+      const notice = document.getElementById('output-notice');
+      if (noticeIcon) noticeIcon.textContent = '✕';
+      if (noticeTitle) noticeTitle.textContent = 'Live transcript stopped unexpectedly';
+      if (noticeDetail) noticeDetail.textContent = errMsg;
+      if (notice) notice.classList.add('active');
+    });
+
+    // ── Listen for recall:expand events from Rust backend ──
+    currentWindow.listen('recall:expand', (event) => {
+      const { title, mode } = event.payload;
+      const context = (title || '').replace('Minutes Assistant', '').replace('Discussing: ', '').trim();
+      if (mode === 'meeting') {
+        setRecallPhase('debrief', context);
+      } else {
+        setRecallPhase('recall', context || null);
+      }
+      recallPtyAlive = true;
+      recallLoading.style.display = 'none';
+      recallTerminalContainer.style.display = '';
+      recallEndBtn.style.display = '';
+    });
+
+    // ── Button handlers ──
+    assistantBtn.addEventListener('click', () => toggleRecallPanel());
+
+    document.getElementById('btn-recall-close').addEventListener('click', () => {
+      userExplicitlyCollapsed = true;
+      collapseRecallPanel();
+    });
+
+    recallEndBtn.addEventListener('click', async () => {
+      try {
+        await invoke('cmd_pty_kill', { sessionId: SESSION_ID });
+        recallPtyAlive = false;
+      } catch (e) {
+        console.error('End session:', e);
+      }
+    });
+
+    document.getElementById('btn-recall-restart').addEventListener('click', async () => {
+      recallExitBanner.classList.remove('active');
+      recallInitialized = false;
+      while (recallTerminalContainer.firstChild) {
+        recallTerminalContainer.removeChild(recallTerminalContainer.firstChild);
+      }
+      await openRecall('assistant');
+    });
+
+    // Quick note inside recall panel
+    async function saveRecallNote() {
+      const text = recallNoteInput.value.trim();
+      if (!text) return;
+      try {
+        await invoke('cmd_add_note', { text });
+        recallNoteInput.value = '';
+      } catch (e) {
+        console.error('Recall note:', e);
+      }
+    }
+
+    document.getElementById('btn-recall-note-save').addEventListener('click', saveRecallNote);
+    recallNoteInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); saveRecallNote(); }
+    });
+
+    // ── Discuss with Agent (from meeting detail) ──
+    document.getElementById('btn-discuss-ai').addEventListener('click', async () => {
+      if (!currentMeetingPath) return;
+      const path = currentMeetingPath;
+      const title = currentMeetingDetail ? currentMeetingDetail.title : 'Meeting';
+      closeDetailView();
+      await openRecall('meeting', path);
+      setRecallPhase('debrief', title);
+    });
+
+    // ── Recording-aware phase transitions ──
+    const originalCheckStatus = checkStatus;
+    let prevRecording = false;
+    let prevProcessing = false;
+    checkStatus = async function() {
+      await originalCheckStatus();
+
+      if (recallExpanded) {
+        if (isRecording && !prevRecording) {
+          setRecallPhase('listening', null);
+          quickNote.classList.remove('active');
+        } else if (!isRecording && prevRecording && !isProcessing) {
+          setRecallPhase('debrief', null);
+        } else if (!isRecording && !isProcessing && recallPhase === 'listening') {
+          setRecallPhase('recall', null);
+        }
+      }
+
+      if (!isRecording && prevRecording && !isProcessing) {
+        if (!recallExpanded) {
+          autoExpandRecall('debrief', null);
+        }
+      }
+
+      prevRecording = isRecording;
+      prevProcessing = isProcessing;
+    };
+
+    // ── Upcoming meeting auto-expand ──
+    const originalCheckUpcoming = checkUpcoming;
+    checkUpcoming = async function() {
+      await originalCheckUpcoming();
+      const upcomingEl = document.getElementById('upcoming');
+      if (upcomingEl && upcomingEl.style.display === 'flex' && !recallExpanded && !isRecording) {
+        const title = document.getElementById('upcoming-title').textContent;
+        autoExpandRecall('prep', title);
+      }
+    };
+
+    // ── Init ──
+    const storedNotify = localStorage.getItem('minutes.notifyOnCompletion');
+    if (storedNotify === 'false') {
+      setNotificationToggle(false);
+    } else {
+      setNotificationToggle(true);
+    }
+    const storedCues = localStorage.getItem('minutes.playCaptureCues');
+    if (storedCues === 'false') {
+      setCueToggle(false);
+    } else {
+      setCueToggle(true);
+    }
+    invoke('cmd_set_completion_notifications', { enabled: notifyOnCompletion }).catch((e) => {
+      console.error('Init notifications:', e);
+    });
+    loadDesktopCapabilities();
+    loadHotkeySettings();
+    checkSetup();
+    checkStatus();
+    setInterval(() => { if (!pollInterval) checkStatus(); }, 2000);
+    // Defer heavy checks (osascript calendar queries) so the UI is interactive immediately
+    setTimeout(() => {
+      loadReadinessItems();
+      loadRecoveryItems();
+      checkUpcoming();
+    }, 2000);
+    setInterval(checkUpcoming, 60000);
+
+    // Restore panel state from previous session
+    if (localStorage.getItem('minutes.recallExpanded') === 'true') {
+      setTimeout(() => openRecall('assistant'), 500);
+    }
+  </script>
+</body>
+</html>

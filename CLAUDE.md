@@ -1,308 +1,391 @@
-# CLAUDE.md — Minutes
+# CLAUDE.md — Minutes (James's Fork)
 
-> Your AI remembers every conversation you've had.
+> Forked from [silverstein/minutes](https://github.com/silverstein/minutes) (v0.5.0) with a custom React frontend and Obsidian vault integration.
 
-## Project Overview
+## What This Is
 
-**Minutes** — open-source, privacy-first conversation memory layer for AI assistants. Captures any audio (meetings, voice memos, brain dumps), transcribes locally with whisper.cpp, diarizes speakers, and outputs searchable markdown with structured action items and decisions. Built with Rust + Tauri v2 + Node.js (MCP).
+**Minutes** is an open-source, privacy-first meeting transcription tool. It captures audio locally, transcribes with whisper.cpp, identifies speakers with pyannote, and outputs structured markdown. Everything runs on-device. No cloud, no API keys required for core functionality.
 
-**Four input modes, one pipeline:**
-- **Live recording**: `minutes record` / `minutes stop` — for meetings, calls, conversations
-- **Live transcript**: `minutes live` / `minutes stop` — real-time transcription with delta reads for AI coaching mid-meeting
-- **Notetaking**: `minutes note "important point"` — timestamped annotations during recording
-- **Folder watcher**: `minutes watch` — auto-processes voice memos from iPhone/iCloud
+**This fork** (`genelco-james/minutes`) replaces the original vanilla HTML/CSS/JS frontend with a modern React + TypeScript UI and integrates with James's Obsidian vault for meeting knowledge management.
 
-## Quick Start
+## Architecture Overview
 
-```bash
-cd ~/Sites/minutes
-cargo build                          # Build Rust workspace
-cargo test -p minutes-core --no-default-features  # Fast tests (no whisper model)
-cargo run --bin minutes -- setup --model tiny      # Download whisper model
-cargo run --bin minutes -- setup --diarization     # Download speaker diarization models (~34MB)
-cargo run --bin minutes -- record    # Start recording
-cargo run --bin minutes -- stop      # Stop and process
+```
+┌─────────────────────────────────────────────────────────┐
+│ Tauri v2 Desktop App (menu bar)                         │
+│                                                         │
+│  ┌──────────────────┐    ┌────────────────────────────┐ │
+│  │ React Frontend   │◄──►│ Rust Backend (IPC)         │ │
+│  │ tauri/src/        │    │ tauri/src-tauri/src/       │ │
+│  │ - Inline styles   │    │ - commands.rs (40+ cmds)   │ │
+│  │ - Single-file     │    │ - main.rs (tray, windows)  │ │
+│  │   build (Vite)    │    │ - call_detect.rs           │ │
+│  └──────────────────┘    │ - pty.rs                   │ │
+│                           └────────┬───────────────────┘ │
+│                                    │                     │
+│                           ┌────────▼───────────────────┐ │
+│                           │ minutes-core (Rust engine)  │ │
+│                           │ crates/core/src/            │ │
+│                           │ - capture.rs (audio)        │ │
+│                           │ - transcribe.rs (whisper)   │ │
+│                           │ - diarize.rs (pyannote)     │ │
+│                           │ - pipeline.rs (orchestrator)│ │
+│                           │ - vault.rs (Obsidian sync)  │ │
+│                           └─────────────────────────────┘ │
+└─────────────────────────────────────────────────────────┘
+         │
+         ▼ vault sync (copy strategy)
+┌─────────────────────────────────────────────────────────┐
+│ Obsidian Vault (a-life)                                 │
+│ ~/Documents/Obsidian/a-life/01-Inbox/                   │
+│ → Processed via /process-meeting Claude Code skill      │
+└─────────────────────────────────────────────────────────┘
 ```
 
-## Full Build (CLI + Tauri App)
+## What Changed From Upstream
 
-```bash
-./scripts/build.sh                   # Builds everything and installs CLI
-./scripts/build.sh --install         # Same + copies .app to /Applications
-./scripts/install-dev-app.sh         # Canonical signed dev app install to ~/Applications/Minutes Dev.app
-# Or manually:
-export CXXFLAGS="-I$(xcrun --show-sdk-path)/usr/include/c++/v1"
-cargo build --release -p minutes-cli           # CLI binary
-cargo tauri build --bundles app                # Tauri .app bundle
-cp target/release/minutes ~/.local/bin/minutes # Install CLI
-open target/release/bundle/macos/Minutes.app   # Launch app
-```
+| Component | Upstream | This Fork |
+|-----------|----------|-----------|
+| Frontend | Vanilla HTML/CSS/JS in `tauri/src/` | React 19 + TypeScript + Vite in `tauri/src/` |
+| Styling | Inline CSS, CSS variables | Inline React styles (no Tailwind in prod build due to Tauri embedding limitations) |
+| Build output | Raw HTML served directly | Single-file HTML via vite-plugin-singlefile (all JS/CSS inlined) |
+| Icons | Original icons | Custom minimal waveform icons (tray: 44x44, app: 512x512) |
+| Vault target | Configurable | Hardcoded to `01-Inbox/` in Obsidian vault |
+| Summarization | Optional Claude/Ollama/OpenAI API | Disabled. Done via Claude Code sessions instead. |
+| Old frontend | N/A | Preserved at `tauri/src-legacy/` for reference |
 
-**IMPORTANT**: After any code change, you must rebuild ALL affected targets:
-- CLI changes: `cargo build --release -p minutes-cli && cp target/release/minutes ~/.local/bin/minutes`
-- Tauri changes: `cargo tauri build --bundles app` then relaunch the appropriate app bundle
-- TCC-sensitive desktop work (hotkeys, Screen Recording, Input Monitoring, Accessibility): `./scripts/install-dev-app.sh`
-- MCP server changes: `cd crates/mcp && npm run build` (compiles TS server + builds UI, then restart MCP client sessions)
-- MCP App UI only: `cd crates/mcp && npm run build:ui` (rebuild just the dashboard HTML)
-- All Rust + app: `./scripts/build.sh` (add `--install` to copy .app to /Applications)
-- **Don't forget the MCP server** — it's TypeScript, not Rust. `./scripts/build.sh` does NOT rebuild it. Always run `cd crates/mcp && npm run build` after touching `crates/mcp/src/index.ts` or `crates/mcp/ui/`.
-
-## Desktop Identity Rules
-
-For macOS permission-sensitive development, there are now two distinct desktop app identities:
-
-- Production app:
-  - name: `Minutes.app`
-  - bundle id: `com.useminutes.desktop`
-  - canonical install path: `/Applications/Minutes.app`
-- Development app:
-  - name: `Minutes Dev.app`
-  - bundle id: `com.useminutes.desktop.dev`
-  - canonical install path: `~/Applications/Minutes Dev.app`
-
-Use the dev app for any work involving:
-
-- dictation hotkeys / Input Monitoring
-- Screen Recording prompts
-- AppleScript / Accessibility automation
-- any repeated TCC permission prompt investigation
-
-Do not trust results from:
-
-- `./Minutes.app`
-- raw `target/debug/minutes-app`
-- raw `target/release/minutes-app`
-- repo-local bundle outputs launched directly from `target/`
-
-Those identities are not stable enough for TCC debugging.
-
-Native hotkey sanity check:
-
-```bash
-./scripts/diagnose-desktop-hotkey.sh "$HOME/Applications/Minutes Dev.app"
-```
-
-See [docs/DESKTOP-DEVELOPMENT.md](/Users/silverbook/Sites/minutes/docs/DESKTOP-DEVELOPMENT.md) for the full workflow.
-
-For dictation shortcut work:
-
-- prioritize the `Standard shortcut (recommended)` path first
-- treat the raw-key `Caps Lock` / `fn` path as advanced and permission-heavy
-- do not call the raw-key path “done” just because the monitor is active; require visible feedback or logged event delivery
-
-### Open-source contributor note
-
-This repo is public, so local scripts must not assume the maintainer's Apple
-certificate or local notarization credentials.
-
-- `./scripts/install-dev-app.sh` works without Apple credentials by falling
-  back to ad-hoc signing
-- for more stable TCC-sensitive testing, contributors can export
-  `MINUTES_DEV_SIGNING_IDENTITY` to any consistent local codesigning identity
-- release signing / notarization is maintainer-only and should be configured
-  explicitly via environment variables, not by hardcoded defaults in scripts
-
-## Pre-Commit Checklist
-
-**Run this mental checklist before every commit from this repo.** Not every item applies to every commit — check which areas your changes touch and verify those.
-
-| Area | When to check | How to verify |
-|------|---------------|---------------|
-| **Manifest tools sync** | Any new/renamed/removed MCP tool | Compare `manifest.json` tools array against `server.tool()` and `registerAppTool()` calls in `crates/mcp/src/index.ts` |
-| **Manifest description** | New user-facing features | Read `long_description` in `manifest.json` — does it mention the new capability? |
-| **Manifest version** | Version bumps | `manifest.json` version must match all other version sources |
-| **MCP server rebuild** | Any change to `crates/mcp/src/` or `crates/mcp/ui/` | `cd crates/mcp && npm run build` |
-| **cargo fmt** | Any Rust change | `cargo fmt --all -- --check` |
-| **cargo clippy** | Any Rust change | `cargo clippy --all --no-default-features -- -D warnings` |
-| **SDK rebuild** | Any change to `crates/sdk/src/` | `cd crates/sdk && npm run build` |
-| **Mutual exclusion** | Any change to recording/dictation/live transcript start paths | Verify all three modes check each other's PID/state: `live_transcript::run` checks recording+dictation PIDs, `cmd_record`/`capture::record_to_wav` checks live PID, `dictation::run` checks live PID, Tauri `cmd_start_*` checks `live_transcript_active`+`recording`+`dictation_active` |
-| **Tauri command duplication** | Changes to live transcript start/stop logic | Both `cmd_start_live_transcript` and `handle_live_shortcut_event` must use the shared `try_acquire_live` + `run_live_session` functions. Do NOT duplicate logic. |
-| **README accuracy** | New/removed tools, features, crates, or CLI commands | Tool/resource counts, crate list in Architecture, feature sections, and CLI examples in README.md must reflect the current state. Check: tool count matches `manifest.json`, crate list matches `ls crates/*/`, module count matches `ls crates/core/src/*.rs` |
-| **npm dep versions** | Version bumps | `crates/mcp/package.json` `minutes-sdk` dep must reference a version that's actually published on npm. Check with `npm view minutes-sdk versions --json` |
-
-## Release Checklist
-
-**When shipping a new version, walk through every item in order.**
-
-### 1. Version bump (all 6 must match)
-```bash
-# Bump in: Cargo.toml, crates/cli/Cargo.toml, tauri/src-tauri/tauri.conf.json,
-#          crates/mcp/package.json, crates/sdk/package.json, manifest.json
-# Also bump the version string in crates/mcp/src/index.ts (McpServer({ version }))
-# Verify:
-grep version Cargo.toml tauri/src-tauri/tauri.conf.json crates/mcp/package.json \
-  crates/sdk/package.json manifest.json && grep 'version:' crates/mcp/src/index.ts
-```
-
-### 2. Manifest sync
-- Tools in `manifest.json` match tools registered in `crates/mcp/src/index.ts`
-- `long_description` reflects current capabilities
-- `keywords` are current
-
-### 3. MCP runtime deps
-All `import` statements in `crates/mcp/src/index.ts` must have their packages in `dependencies` (not `devDependencies`) in `package.json`. Smoke-test: `node -e "require('./crates/mcp/dist/index.js')"`
-
-### 4. Build everything
-```bash
-cd crates/mcp && npm run build       # MCP server + dashboard UI
-cargo fmt --all -- --check           # Rust formatting
-cargo clippy --all --no-default-features -- -D warnings  # Rust lints
-```
-
-### 5. Commit, tag, push
-```bash
-git tag vX.Y.Z && git push origin main --tags
-```
-
-### 6. GitHub release
-```bash
-gh release create vX.Y.Z -t "title" -F notes.md  # Triggers signed DMG + CLI binary CI
-```
-
-### 7. Build and upload .mcpb
-```bash
-mcpb pack . minutes.mcpb
-gh release upload vX.Y.Z minutes.mcpb --clobber
-```
-
-### 8. Publish npm packages
-```bash
-cd crates/sdk && npm publish --access public --registry https://registry.npmjs.org
-cd crates/mcp && npm publish --access public --registry https://registry.npmjs.org
-```
-**IMPORTANT**: `crates/mcp/package.json` must depend on `"minutes-sdk": "^X.Y.Z"` (npm version), NOT `"file:../sdk"` (local path). Check before publishing. If 2FA blocks publish, use a granular access token with "Bypass 2FA" enabled.
-
-### 9. Redeploy landing page
-```bash
-cd site && npm install && vercel deploy --yes --prod --scope evil-genius-laboratory
-```
-
-### 10. Update Homebrew tap formula if CLI changed
+**All Rust crates are unchanged.** The backend, CLI, MCP server, and core engine are identical to upstream.
 
 ## Project Structure
 
 ```
-minutes/
-├── PLAN.md                    # Master plan (survives compaction — read this first)
-├── CLAUDE.md                  # This file
-├── BUILD-STATUS.md            # Build progress tracker
-├── Cargo.toml                 # Workspace root
+minutes/                           # Repository root
+├── CLAUDE.md                      # This file
+├── Cargo.toml                     # Rust workspace root
 ├── crates/
-│   ├── core/src/              # 26 Rust modules — the engine
-│   │   ├── capture.rs         # Audio capture (cpal)
-│   │   ├── transcribe.rs      # Whisper.cpp transcription (delegates to whisper-guard for anti-hallucination, optional nnnoiseless denoise)
-│   │   ├── diarize.rs         # Speaker diarization + attribution types (pyannote-rs native or pyannote subprocess)
-│   │   ├── summarize.rs       # LLM summarization + speaker mapping (ureq HTTP client)
-│   │   ├── voice.rs           # Voice profile storage and matching (voices.db, enrollment, cosine similarity)
-│   │   ├── pipeline.rs        # Orchestrates the full flow + structured extraction
-│   │   ├── notes.rs           # Timestamped notetaking during/after recordings
-│   │   ├── watch.rs           # Folder watcher (settle delay, dedup, lock)
-│   │   ├── markdown.rs        # YAML frontmatter + shared parsing utilities
-│   │   ├── search.rs          # Walk-dir search + action item queries
-│   │   ├── config.rs          # TOML config with compiled defaults
-│   │   ├── pid.rs             # PID file lifecycle (flock atomic)
-│   │   ├── events.rs          # Append-only JSONL event log for agent reactivity
-│   │   ├── streaming_whisper.rs # Progressive transcription (partial results every 2s)
-│   │   ├── streaming.rs       # Streaming state machine for live transcription
-│   │   ├── logging.rs         # Structured JSON logging
-│   │   ├── error.rs           # Per-module error types (thiserror)
-│   │   ├── calendar.rs        # Calendar integration (upcoming meetings)
-│   │   ├── daily_notes.rs     # Daily note append for dictation/memos
-│   │   ├── dictation.rs       # Dictation mode (speak → clipboard + daily note)
-│   │   ├── live_transcript.rs # Live transcript mode (real-time JSONL + WAV, delta reads, AI coaching)
-│   │   ├── health.rs          # System health checks (model, mic, disk, watcher)
-│   │   ├── hotkey_macos.rs    # macOS global hotkey registration
-│   │   ├── screen.rs          # Screen context capture (screenshots)
-│   │   ├── vad.rs             # Voice activity detection
-│   │   └── vault.rs           # Obsidian/Logseq vault sync
-│   ├── whisper-guard/          # Standalone anti-hallucination toolkit (segment dedup, silence strip, whisper params)
-│   ├── cli/                   # CLI binary — 31 commands
-│   ├── reader/                # Lightweight read-only meeting parser (no audio deps)
-│   ├── assets/                # Bundled assets (demo.wav)
-│   └── mcp/                   # MCP server — 12 tools + 6 resources + MCP App dashboard
-│       └── ui/                # Interactive dashboard (vanilla TS, builds to single-file HTML)
-├── site/                      # Landing page (Next.js + Remotion demo player)
-├── tauri/                     # Tauri v2 menu bar app + singleton AI Assistant
-├── .claude/plugins/minutes/   # Claude Code plugin — 12 skills + 1 agent + 2 hooks
-└── tests/integration/         # Integration tests (including real whisper tests)
+│   ├── core/src/                  # 26 Rust modules — the engine (UNCHANGED)
+│   │   ├── capture.rs             # Audio capture via cpal
+│   │   ├── transcribe.rs          # Whisper.cpp transcription
+│   │   ├── diarize.rs             # Speaker diarization (pyannote-rs)
+│   │   ├── pipeline.rs            # Full audio → markdown flow
+│   │   ├── vault.rs               # Obsidian/Logseq vault sync
+│   │   ├── summarize.rs           # LLM summarization (disabled in our config)
+│   │   ├── search.rs              # Full-text search across meetings
+│   │   ├── config.rs              # TOML config with defaults
+│   │   ├── voice.rs               # Voice profile matching
+│   │   └── ... (26 modules total)
+│   ├── cli/                       # CLI binary (`minutes` command)
+│   ├── mcp/                       # MCP server (Claude Desktop/Cursor integration)
+│   ├── reader/                    # Read-only meeting parser
+│   ├── sdk/                       # TypeScript SDK
+│   ├── whisper-guard/             # Anti-hallucination toolkit
+│   └── assets/                    # Bundled assets (demo.wav)
+├── tauri/
+│   ├── src/                       # ★ CUSTOM REACT FRONTEND
+│   │   ├── index.html             # Entry point (Vite transforms this)
+│   │   ├── vite.config.ts         # Vite + React + single-file build
+│   │   ├── package.json           # npm deps (React, Tauri API, Lucide, Radix)
+│   │   ├── tsconfig.json          # TypeScript config
+│   │   ├── src/
+│   │   │   ├── main.tsx           # React entry point
+│   │   │   ├── App.tsx            # ★ Main app component (all views)
+│   │   │   ├── lib/
+│   │   │   │   └── tauri.ts       # Typed IPC wrappers for Rust commands
+│   │   │   ├── components/        # Component files (currently unused — App.tsx has inline components)
+│   │   │   └── index.css          # Design system tokens (Tailwind, used in dev mode)
+│   │   └── dist/                  # Build output (single index.html with inlined JS/CSS)
+│   ├── src-legacy/                # Original vanilla frontend (preserved for reference)
+│   │   ├── index.html             # Original main window
+│   │   ├── note.html              # Original quick note popup
+│   │   ├── terminal.html          # Original terminal view
+│   │   └── ...
+│   └── src-tauri/                 # Rust backend for Tauri (UNCHANGED)
+│       ├── src/
+│       │   ├── main.rs            # App init, tray menu, window management, hotkeys
+│       │   ├── commands.rs        # 40+ IPC command handlers
+│       │   ├── call_detect.rs     # Auto-detect Teams/Zoom/FaceTime calls
+│       │   └── pty.rs             # Terminal session management
+│       ├── tauri.conf.json        # Tauri config (frontendDist: ../src/dist)
+│       ├── icons/                 # ★ Custom tray + app icons
+│       │   ├── icon.png           # Tray: 44x44 waveform (template, auto light/dark)
+│       │   ├── icon-recording.png # Tray: red waveform + red dot
+│       │   ├── icon-live.png      # Tray: waveform + green dot
+│       │   ├── app-icon.png       # App: 512x512 waveform on dark square
+│       │   └── icon.icns          # macOS bundle icon
+│       └── Cargo.toml             # Rust deps (tauri 2, minutes-core)
+├── docs/                          # Documentation
+├── plugin/                        # Claude Code plugin (upstream)
+└── site/                          # Marketing website (upstream)
 ```
 
-## Development Commands
+## Frontend Architecture
+
+### Why Single-File Build
+
+Tauri v2 embeds frontend files into the Rust binary. The embedded filesystem doesn't resolve relative `./assets/` paths for separate JS/CSS files. The solution: `vite-plugin-singlefile` inlines all JavaScript and CSS directly into `index.html`, producing a single self-contained file (~207KB) that Tauri embeds and serves correctly.
+
+### Why Inline Styles (Not Tailwind)
+
+Tailwind CSS 4 works perfectly in development (Vite dev server), but the compiled Tailwind classes caused issues in the single-file embedded build (class names referencing CSS custom properties that weren't resolving). The production App.tsx uses inline React `style` objects for reliability. The Tailwind design tokens remain in `index.css` for dev mode reference.
+
+### Design System (reference, defined in index.css @theme)
+
+| Token | Dark Value | Light Value | Usage |
+|-------|-----------|-------------|-------|
+| `bg` | `#1a1a1c` | `#fafafa` | App background |
+| `elevated` | `#242426` | `#ffffff` | Cards, panels, banners |
+| `hover` | `#2e2e30` | `#f0f0f2` | Hover states |
+| `border` | `#333335` | `#e5e5e7` | Borders |
+| `text` | `#ececee` | `#1a1a1c` | Primary text |
+| `text-secondary` | `#8e8e93` | `#6e6e73` | Secondary text |
+| `text-tertiary` | `#5c5c60` | `#aeaeb2` | Labels, timestamps |
+| `accent-red` | `#ef4444` | same | Recording indicator |
+| `accent-green` | `#34d399` | same | Success, status dot |
+| `accent-blue` | `#60a5fa` | same | Info, processing |
+
+Typography: System font stack (`-apple-system, BlinkMacSystemFont, system-ui, sans-serif`). Mono: `SF Mono, Menlo, monospace`.
+
+Spacing: 8px base grid (4, 8, 12, 16, 24, 32px).
+
+### IPC Interface (Frontend → Rust)
+
+All communication uses `window.__TAURI__.core.invoke("cmd_name", args)`. Typed wrappers in `src/lib/tauri.ts`:
+
+```typescript
+// Key commands used by the React frontend
+startRecording(mode?)          // Start audio capture
+stopRecording()                // Stop and process
+getStatus()                    // { recording, processing, processing_stage }
+listMeetings()                 // Array of meeting metadata
+getMeetingDetail(path)         // Full meeting data with sections
+getSettings()                  // Config key-value pairs
+setSetting(key, value)         // Update config
+addNote(text)                  // Add note to current recording
+vaultStatus()                  // { enabled, path, strategy }
+getStorageStats()              // { total_mb, meetings, memos }
+```
+
+Events (Rust → Frontend):
+```typescript
+onRecordingStatus(cb)          // recording started/stopped + elapsed seconds
+onProcessingStatus(cb)         // transcription progress
+onLatestArtifact(cb)           // new transcript available
+```
+
+### Meeting Detail Response Shape
+
+The `cmd_get_meeting_detail` command returns:
+
+```json
+{
+  "path": "/Users/.../meeting.md",
+  "title": "Meeting Title",
+  "date": "2026-03-29T11:52:25.484430-04:00",
+  "duration": "15s",
+  "content_type": "meeting",
+  "status": "transcript-only",
+  "context": null,
+  "attendees": [],
+  "calendar_event": null,
+  "sections": [
+    { "heading": "Transcript", "content": "[0:00] Speaker text..." },
+    { "heading": "Summary", "content": "..." },
+    { "heading": "Action Items", "content": "..." }
+  ],
+  "speaker_map": []
+}
+```
+
+Note: sections is an array of `{ heading, content }` pairs, NOT a flat body string.
+
+## Build Commands
+
+### Frontend Only
 
 ```bash
-# Build (macOS 26 needs C++ include path for whisper.cpp)
-export CXXFLAGS="-I$(xcrun --show-sdk-path)/usr/include/c++/v1"
-cargo build
-
-# Test
-cargo test -p minutes-core --no-default-features   # Fast (no whisper model)
-cargo test -p minutes-core                          # Full (needs tiny model)
-
-# Lint
-cargo clippy --all --no-default-features -- -D warnings
-cargo fmt --all -- --check
-
-# MCP server (TS server + interactive dashboard UI)
-cd crates/mcp && npm install && npm run build       # tsc + vite single-file build
-npx vitest run                                      # 30 reader.ts unit tests
-node test/mcp_tools_test.mjs                        # 8 MCP integration tests
+cd tauri/src
+npm install                    # First time only
+npm run build                  # TypeScript check + Vite build + strip crossorigin attrs
+npm run dev                    # Start Vite dev server on port 1420
 ```
 
-## Key Architecture Decisions
+### Full App (Frontend + Rust + Bundle)
 
-- **Rust** for the engine — single 6.7MB binary, cross-platform, fast
-- **whisper-rs** (whisper.cpp) for transcription — local, Apple Silicon optimized, params match whisper-cli defaults (best_of=5, entropy/logprob thresholds)
-- **ffmpeg preferred for audio decoding** — shells out to ffmpeg for m4a/mp3/ogg when available (identical to whisper-cli's pipeline). Falls back to symphonia (pure Rust) when ffmpeg isn't installed. This matters for non-English audio — symphonia's AAC decoder produces subtly different samples that trigger whisper hallucination loops (issue #21).
-- **Silero VAD** (via whisper-rs) — ML-based voice activity detection integrated directly into whisper's transcription params. Prevents hallucination loops by skipping silence segments. Auto-downloaded during `minutes setup`.
-- **whisper-guard** crate — standalone anti-hallucination toolkit extracted from minutes-core. 5-layer defense: Silero VAD gating, no_speech probability filtering (>80% = skip), consecutive segment dedup (3+ similar collapsed), interleaved A/B/A/B pattern detection, trailing noise trimming. Publishable to crates.io independently.
-- **nnnoiseless** (optional) — pure Rust RNNoise port for noise reduction. Behind `denoise` feature flag, controlled by `config.transcription.noise_reduction`. Processes at 48kHz with first-frame priming. Batch path only (not streaming).
-- **pyannote-rs** for speaker diarization — native Rust, ONNX models (~34MB), no Python. Works in CLI, Tauri desktop app, and via MCP. Behind the `diarize` Cargo feature flag.
-- **Speaker attribution** — confidence-aware system mapping SPEAKER_X labels to real names. Four levels: L0 (deterministic 1-on-1 via calendar+identity), L1 (LLM suggestions capped at Medium confidence), L2 (voice enrollment in `voices.db`), L3 (confirmed-only learning). Wrong names are worse than anonymous — only High-confidence attributions rewrite transcript labels. `speaker_map` in YAML frontmatter is the canonical attribution data. Voice profiles stored in `~/.minutes/voices.db` (separate from `graph.db` which wipes on rebuild).
-- **symphonia** for audio format conversion — m4a/mp3/ogg → WAV, pure Rust (fallback when ffmpeg unavailable)
-- **Windowed-sinc resampler** (32-tap Hann) — alias-free 44100→16000 downsampling for WAV inputs
-- **ureq** for HTTP — pure Rust, no secrets in process args (replaced curl)
-- **fs2 flock** for PID files — atomic check-and-write, prevents TOCTOU races
-- **Tauri v2** for desktop app — shares `minutes-core` with CLI, ~10MB
-- **Markdown + YAML frontmatter** for storage — universal, works with everything
-- **Structured extraction** — action items + decisions in frontmatter as queryable YAML
-- **No API keys needed** — Claude summarizes conversationally via MCP tools
-- **Live transcript** — per-utterance whisper → JSONL append with PidGuard flock for session exclusivity. Delta reads via line cursor or wall-clock duration. Optional WAV preservation for post-meeting reprocessing. Agent-agnostic: JSONL readable by any agent, MCP tools for Claude, CLAUDE.md context injection for Codex/Gemini.
+```bash
+# Prerequisites: Rust toolchain, Tauri CLI
+cargo install tauri-cli --version "^2"
 
-## Key Patterns
+# Build production .app
+cd tauri/src && npm run build
+cd tauri/src-tauri && cargo tauri build --bundles app
 
-- All audio processing is local (whisper.cpp + pyannote-rs + Silero VAD). ffmpeg recommended but optional.
-- Claude summarizes via MCP when the user asks (no API key needed)
-- Optional automated summarization via Ollama (local), Mistral, or cloud LLMs
-- Config at `~/.config/minutes/config.toml` (optional, compiled defaults work)
-- Tauri assistant uses a singleton workspace at `~/.minutes/assistant/`
-- `CLAUDE.md` holds general assistant instructions; `CURRENT_MEETING.md` is the active meeting focus for "Discuss with AI"
-- Meetings: `~/meetings/` | Voice memos: `~/meetings/memos/`
-- `0600` permissions on all output (sensitive content)
-- PID file + flock for recording state (`~/.minutes/recording.pid`)
-- Watcher: settle delay, move to `processed/`/`failed/`, lock file
-- JSON structured logging: `~/.minutes/logs/minutes.log`
-- 100% doc comment coverage on all pub functions
+# Install to /Applications
+rm -rf /Applications/Minutes.app
+cp -R target/release/bundle/macos/Minutes.app /Applications/
+xattr -cr /Applications/Minutes.app
+open -a "Minutes"
+```
 
-## Test Coverage
+### Development Mode
 
-~255 tests total:
-- 27 whisper-guard unit tests (resample, normalize, strip_silence, dedup_segments, dedup_interleaved, trim_trailing_noise, clean_transcript + 1 doctest)
-- 124 core unit tests (all modules including screen, calendar, config, watch, streaming whisper, vault, dictation, live_transcript, health, vad, hotkey)
-- 10 integration tests (pipeline, permissions, collisions, search filters)
-- 23 Tauri unit tests (commands, call detection)
-- 2 CLI tests
-- 6 reader crate tests (search, parse)
-- 30 reader.ts unit tests (vitest — frontmatter parsing, listing, search, actions, profiles; reader lives in crates/sdk/src/reader.ts)
-- 8 MCP integration tests (CLI JSON output, TypeScript compilation)
-- 1 hook unit test (post-record hook)
+```bash
+# Terminal 1: Start Vite dev server
+cd tauri/src && npm run dev
 
-## Claude Ecosystem Integration
+# Terminal 2: Start Tauri dev build (connects to Vite)
+cd tauri/src-tauri && cargo tauri dev
+```
 
-- **MCP Server**: 12 tools + 6 resources for Claude Desktop / Cowork / Dispatch (`npx minutes-mcp` for zero-install)
-- **Claude Code Plugin**: 12 skills (8 core + 3 interactive lifecycle + 1 ghost context) + meeting-analyst agent + PostToolUse hook
-- **Interactive meeting lifecycle**: `/minutes prep` → record → `/minutes debrief` → `/minutes weekly` with skill chaining via `.prep.md` files
-- **Conversational summarization**: Claude reads transcripts via MCP, no API key needed
-- **Auto-tagging + alerts**: PostToolUse hook tags meetings with git repo, checks for decision conflicts, surfaces overdue action items
-- **Proactive reminders**: SessionStart hook checks calendar for upcoming meetings and nudges `/minutes prep`
-- **Desktop assistant**: Tauri AI Assistant is a singleton session that can switch focus into a selected meeting without spawning parallel assistant workspaces
-- **Live coaching**: Tauri Live Mode toggle starts real-time transcription; the assistant workspace `CLAUDE.md` auto-updates so the connected Recall session, Claude Desktop/Code, or any other agent can read the live JSONL file and coach mid-meeting. There is no dedicated transcript/coaching panel in Tauri v1; the coaching happens through the assistant chat surface.
+First Rust build takes ~3-5 minutes (579 crates). Subsequent builds take ~6-25 seconds.
+
+### CLI Only (no UI changes)
+
+```bash
+cargo build --release -p minutes-cli
+# Binary at target/release/minutes
+```
+
+## Configuration
+
+Config file: `~/.config/minutes/config.toml`
+
+### James's Configuration
+
+```toml
+output_dir = "/Users/jgaynor/meetings"
+
+[transcription]
+model = "medium"                    # Whisper medium (1.5 GB, good accuracy)
+
+[diarization]
+engine = "none"                     # Not configured yet (needs HuggingFace token)
+
+[summarization]
+engine = "none"                     # Disabled — summarization via Claude Code sessions
+
+[call_detection]
+enabled = true                      # Auto-detect calls every 3 seconds
+apps = ["zoom.us", "Microsoft Teams", "FaceTime", "Webex", "Slack"]
+
+[vault]
+enabled = true
+path = "/Users/jgaynor/Documents/Obsidian/a-life"
+meetings_subdir = "01-Inbox"        # Transcripts land in Obsidian inbox
+strategy = "copy"
+```
+
+### Key Config Decisions
+
+- **Summarization disabled**: We use Claude Code's `/process-meeting` skill instead of API-based summarization. This keeps everything local and gives James control over the processing.
+- **Vault sync to 01-Inbox**: Raw transcripts land in the Obsidian inbox, where they wait to be processed via the `process-meeting` skill. After processing, they migrate to domain-specific folders.
+- **Call detection enabled**: Minutes detects Teams/Zoom calls and prompts to record.
+- **Medium Whisper model**: Balance of accuracy and speed. Better with proper nouns than the small model.
+
+## Obsidian Integration Pipeline
+
+```
+Meeting happens
+     │
+     ├── Click Record in Minutes menu bar
+     │         │
+     │         ▼
+     │   whisper.cpp transcribes locally (medium model)
+     │         │
+     │         ▼
+     │   Markdown with YAML frontmatter saved to ~/meetings/
+     │         │
+     │         ▼
+     │   Vault sync copies to 01-Inbox/ in Obsidian vault
+     │
+     ▼
+Run /process-meeting in Claude Code
+     │
+     ├── Scan inbox for meeting captures
+     ├── Vocabulary correction (fix Whisper misspellings)
+     ├── Verify participants, initiative, project (guided questions)
+     ├── Create: transcript (central folder) + summary (project folder)
+     ├── Create: task notes, person notes (CRM)
+     ├── Update: journal, vault index
+     └── Delete inbox capture
+```
+
+Full details in the Obsidian vault at `02-Projects/Meeting Knowledge Base Plan.md`.
+
+## Data Flow
+
+- **Audio**: Captured locally via `cpal`, saved as WAV
+- **Transcription**: whisper.cpp (GPU-accelerated via Metal on Apple Silicon)
+- **Output**: Markdown files in `~/meetings/` (meetings) and `~/meetings/memos/` (voice memos)
+- **Vault sync**: Copy strategy duplicates markdown to Obsidian vault's `01-Inbox/`
+- **Storage**: All local. Audio files, transcripts, SQLite index (`~/.minutes/`)
+- **No cloud**: Summarization disabled. No API keys used. No telemetry.
+
+## Background Services
+
+- **Minutes.app**: Menu bar app, call detection, one-click recording
+- **Watcher service**: `~/Library/LaunchAgents/dev.getminutes.watcher.plist` — auto-starts on login, processes audio files in `~/.minutes/inbox/`
+- **CLI**: `minutes` command at `/opt/homebrew/bin/minutes` (symlinked from Cellar)
+
+## Known Limitations (This Fork)
+
+1. **Single-file build required**: Tauri's embedded filesystem doesn't resolve relative paths for separate JS/CSS files. Everything must be inlined into `index.html`.
+2. **Inline styles in production**: Tailwind CSS custom properties don't resolve in the embedded webview. Production App.tsx uses inline `style` objects.
+3. **No note.html or terminal.html**: The original app had separate HTML files for note popups and terminal views. Our React SPA handles notes via a modal in the main window. Terminal views are not yet ported.
+4. **Diarization not configured**: Speaker identification via pyannote requires a HuggingFace token. Currently `engine = "none"`.
+5. **Unsigned app**: No Apple Developer certificate. Requires `xattr -cr` after install. Gatekeeper bypass on first launch.
+
+## Upstream Sync
+
+To pull upstream changes (Rust backend improvements, new features):
+
+```bash
+git fetch upstream
+git merge upstream/main
+# Resolve conflicts in tauri/src/ (our React frontend vs their vanilla HTML)
+# Rust crates should merge cleanly since we haven't modified them
+```
+
+The `tauri/src-legacy/` directory preserves the original frontend for reference during merges.
+
+## Testing
+
+### Frontend
+
+```bash
+cd tauri/src
+npx tsc --noEmit              # Type check (no emit)
+npm run build                  # Full build (type check + Vite + strip crossorigin)
+```
+
+### Rust Backend (unchanged from upstream)
+
+```bash
+cargo test -p minutes-core --no-default-features   # Fast (no whisper model)
+cargo test -p minutes-core                          # Full (needs model)
+cargo clippy --all --no-default-features -- -D warnings
+cargo fmt --all -- --check
+```
+
+### Integration Test
+
+```bash
+minutes demo                   # Runs bundled audio through pipeline
+minutes health                 # Check model, mic, vault, disk
+minutes vault status           # Verify Obsidian sync is healthy
+```
+
+## File Locations
+
+| What | Where |
+|------|-------|
+| App binary | `/Applications/Minutes.app` |
+| CLI binary | `/opt/homebrew/bin/minutes` |
+| Config | `~/.config/minutes/config.toml` |
+| Whisper models | `~/.minutes/models/` (small: 466MB, medium: 1.5GB) |
+| Meeting output | `~/meetings/` |
+| Voice memos | `~/meetings/memos/` |
+| SQLite index | `~/.minutes/` |
+| Logs | `~/.minutes/logs/` |
+| Watcher service | `~/Library/LaunchAgents/dev.getminutes.watcher.plist` |
+| Vault sync target | `~/Documents/Obsidian/a-life/01-Inbox/` |
+| Fork source | `~/Documents/Cursor_Projects/minutes/` |

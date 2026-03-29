@@ -1,0 +1,194 @@
+@import "tailwindcss";
+
+@theme {
+  /* Typography */
+  --font-sans: "Inter", -apple-system, BlinkMacSystemFont, "SF Pro Text",
+    system-ui, sans-serif;
+  --font-display: "Inter Display", "Inter", -apple-system, BlinkMacSystemFont,
+    system-ui, sans-serif;
+  --font-mono: "SF Mono", "Menlo", "Consolas", monospace;
+
+  /* Spacing (8px base grid) */
+  --spacing-xs: 4px;
+  --spacing-sm: 8px;
+  --spacing-md: 16px;
+  --spacing-lg: 24px;
+  --spacing-xl: 32px;
+  --spacing-2xl: 48px;
+
+  /* Border radius */
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 10px;
+  --radius-full: 9999px;
+
+  /* Dark mode colors (primary) */
+  --color-bg: #1a1a1c;
+  --color-elevated: #242426;
+  --color-hover: #2e2e30;
+  --color-border: #333335;
+  --color-border-subtle: #2a2a2c;
+  --color-text: #ececee;
+  --color-text-secondary: #8e8e93;
+  --color-text-tertiary: #5c5c60;
+  --color-accent-red: #ef4444;
+  --color-accent-red-bg: rgba(239, 68, 68, 0.12);
+  --color-accent-green: #34d399;
+  --color-accent-green-bg: rgba(52, 211, 153, 0.12);
+  --color-accent-blue: #60a5fa;
+  --color-accent-blue-bg: rgba(96, 165, 250, 0.12);
+  --color-recording: #ef4444;
+  --color-recording-pulse: rgba(239, 68, 68, 0.3);
+}
+
+/* Base resets */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html {
+  font-family: var(--font-sans);
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--color-text);
+  background: var(--color-bg);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  /* Prevent text selection across the app (native feel) */
+  user-select: none;
+  /* Allow dragging the window from the title bar area */
+  -webkit-app-region: no-drag;
+}
+
+body {
+  min-height: 100vh;
+  overflow: hidden;
+}
+
+/* Scrollbar styling (thin, subtle) */
+::-webkit-scrollbar {
+  width: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--color-border);
+  border-radius: var(--radius-full);
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-text-tertiary);
+}
+
+/* Text that should be selectable */
+.selectable {
+  user-select: text;
+}
+
+/* Recording pulse animation */
+@keyframes recording-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.4;
+  }
+}
+
+.animate-recording-pulse {
+  animation: recording-pulse 1.5s ease-in-out infinite;
+}
+
+/* Waveform animation */
+@keyframes waveform {
+  0%,
+  100% {
+    height: 4px;
+  }
+  50% {
+    height: 20px;
+  }
+}
+
+/* View transitions */
+.view-enter {
+  animation: viewEnter 150ms ease-out;
+}
+
+@keyframes viewEnter {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Staggered list items */
+.stagger-item {
+  animation: staggerIn 200ms ease-out both;
+}
+
+@keyframes staggerIn {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Backdrop for modals */
+.backdrop-enter {
+  animation: backdropIn 150ms ease-out;
+}
+
+@keyframes backdropIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* Focus ring (keyboard navigation) */
+:focus-visible {
+  outline: 2px solid var(--color-accent-blue);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
+
+/* Smooth transitions for all interactive elements */
+button,
+a,
+[role="button"] {
+  transition:
+    background-color 100ms ease,
+    color 100ms ease,
+    border-color 100ms ease,
+    opacity 100ms ease;
+}
+
+/* Light mode override */
+@media (prefers-color-scheme: light) {
+  @theme {
+    --color-bg: #fafafa;
+    --color-elevated: #ffffff;
+    --color-hover: #f0f0f2;
+    --color-border: #e5e5e7;
+    --color-border-subtle: #ededef;
+    --color-text: #1a1a1c;
+    --color-text-secondary: #6e6e73;
+    --color-text-tertiary: #aeaeb2;
+  }
+}
