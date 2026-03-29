@@ -425,20 +425,63 @@ where
         }
     }
 
-    // Fallback: if transcript still has UNKNOWN labels (diarization ran but produced
-    // no segments, or speakers==0), replace with configured identity name.
-    if transcript.contains("[UNKNOWN ") {
-        if let Some(my_name) = config.identity.name.as_ref() {
-            speaker_map.push(diarize::SpeakerAttribution {
-                speaker_label: "UNKNOWN".to_string(),
-                name: my_name.clone(),
-                confidence: diarize::Confidence::High,
-                source: diarize::AttributionSource::Deterministic,
-            });
+    // Fallback: if transcript still has UNKNOWN or unattributed SPEAKER_X labels
+    // and this is a solo recording (no attendees), replace all with configured identity.
+    // This handles: diarization returning 0 segments (UNKNOWN), and diarization
+    // over-segmenting a single person into multiple "speakers".
+    if let Some(my_name) = config.identity.name.as_ref() {
+        let has_unknown = transcript.contains("[UNKNOWN ");
+        let has_unattributed_speakers = transcript.lines().any(|line| {
+            if let Some(rest) = line.strip_prefix('[') {
+                if let Some(bracket_end) = rest.find(']') {
+                    let label = &rest[..bracket_end].split_whitespace().next().unwrap_or("");
+                    return label.starts_with("SPEAKER_");
+                }
+            }
+            false
+        });
+
+        if has_unknown || (has_unattributed_speakers && attendees.is_empty()) {
+            if has_unknown {
+                speaker_map.push(diarize::SpeakerAttribution {
+                    speaker_label: "UNKNOWN".to_string(),
+                    name: my_name.clone(),
+                    confidence: diarize::Confidence::High,
+                    source: diarize::AttributionSource::Deterministic,
+                });
+            }
+            // Map all remaining SPEAKER_X labels to identity when no attendees (solo recording)
+            if has_unattributed_speakers && attendees.is_empty() {
+                let mapped_labels: std::collections::HashSet<String> = speaker_map
+                    .iter()
+                    .map(|a| a.speaker_label.clone())
+                    .collect();
+                let extra_labels: Vec<String> = transcript
+                    .lines()
+                    .filter_map(|line| {
+                        let rest = line.strip_prefix('[')?;
+                        let bracket_end = rest.find(']')?;
+                        let label = rest[..bracket_end].split_whitespace().next()?;
+                        if label.starts_with("SPEAKER_") && !mapped_labels.contains(label) {
+                            Some(label.to_string())
+                        } else {
+                            None
+                        }
+                    })
+                    .collect();
+                for label in extra_labels {
+                    speaker_map.push(diarize::SpeakerAttribution {
+                        speaker_label: label,
+                        name: my_name.clone(),
+                        confidence: diarize::Confidence::High,
+                        source: diarize::AttributionSource::Deterministic,
+                    });
+                }
+            }
             transcript = diarize::apply_confirmed_names(&transcript, &speaker_map);
             tracing::info!(
                 name = %my_name,
-                "Fallback: replaced UNKNOWN speaker labels with configured identity"
+                "Fallback: attributed remaining speaker labels to configured identity"
             );
         }
     }
