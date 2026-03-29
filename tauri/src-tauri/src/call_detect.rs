@@ -234,11 +234,12 @@ impl CallDetector {
                     // ── END-DETECTION MODE ─────────────────────────
                     // Only monitor for call end if THIS recording was started via call prompt
                     if let Some(ref app_name) = triggered_app {
+                        dlog!("[call-detect] end-detection: checking app={}", app_name);
                         let meeting_active = if has_window_detection(app_name) {
                             // Count-based detection: record initial window count, detect drops
                             let current_count = get_window_count(app_name);
                             let initial = *initial_window_count.get_or_insert(current_count);
-                            eprintln!(
+                            dlog!(
                                 "[call-detect] {} windows: initial={}, current={}",
                                 app_name, initial, current_count
                             );
@@ -256,7 +257,7 @@ impl CallDetector {
                         };
 
                         if !meeting_active && !countdown_shown {
-                            eprintln!(
+                            dlog!(
                                 "[call-detect] meeting ended for {} — showing stop countdown",
                                 app_name
                             );
@@ -509,46 +510,34 @@ fn has_window_detection(app_name: &str) -> bool {
     )
 }
 
-/// Get the number of windows for a specific call app's process.
-/// Used for delta-based detection: record count at start, detect drops.
+/// Get the number of on-screen windows for a specific call app.
+/// Uses a precompiled Swift helper that calls CGWindowListCopyWindowInfo
+/// (CoreGraphics). Does NOT require Automation permission.
 ///
-/// Performance: ~5-10ms per call. Runs every 3s only while recording.
+/// Performance: ~5ms. Runs every 3s only while recording.
 fn get_window_count(app_name: &str) -> u32 {
-    let script = match app_name {
-        // Teams: check both v1 and v2 process names
-        "Microsoft Teams" | "Microsoft Teams (work or school)" | "MSTeams" | "Teams" => {
-            r#"tell application "System Events"
-    set teamNames to {"Microsoft Teams", "MSTeams"}
-    repeat with t in teamNames
-        if exists process t then return count of windows of process t
-    end repeat
-    return 0
-end tell"#
+    let process_names: Vec<&str> = match app_name {
+        "Microsoft Teams" | "Microsoft Teams (work or school)" | "MSTeams" | "Teams"
+        | "com.microsoft.teams2" | "com.microsoft.teams" => {
+            vec!["Microsoft Teams", "MSTeams"]
         }
-        "zoom.us" | "Zoom" => {
-            r#"tell application "System Events"
-    if exists process "zoom.us" then return count of windows of process "zoom.us"
-    return 0
-end tell"#
-        }
-        "FaceTime" => {
-            r#"tell application "System Events"
-    if exists process "FaceTime" then return count of windows of process "FaceTime"
-    return 0
-end tell"#
-        }
-        "Slack" => {
-            r#"tell application "System Events"
-    if exists process "Slack" then return count of windows of process "Slack"
-    return 0
-end tell"#
-        }
-        _ => return u32::MAX, // Unknown app: return high count so delta never triggers
+        "zoom.us" | "Zoom" | "us.zoom.xos" => vec!["zoom.us"],
+        "FaceTime" | "com.apple.FaceTime" => vec!["FaceTime"],
+        "Slack" | "com.slack.Slack" | "com.tinyspeck.slackmacgap" => vec!["Slack"],
+        _ => return u32::MAX,
     };
 
-    let output = std::process::Command::new("osascript")
-        .arg("-e")
-        .arg(script)
+    let helper = find_window_count_binary();
+    let binary = match helper {
+        Some(p) => p,
+        None => {
+            log_to_detect_file("window_count binary not found");
+            return u32::MAX;
+        }
+    };
+
+    let output = std::process::Command::new(&binary)
+        .args(&process_names)
         .output();
 
     match output {
@@ -558,9 +547,46 @@ end tell"#
                 .parse::<u32>()
                 .unwrap_or(u32::MAX)
         }
-        _ => {
-            eprintln!("[call-detect] window count check failed for {}", app_name);
-            u32::MAX // Assume high count to avoid false stops
+        Ok(out) => {
+            log_to_detect_file(&format!(
+                "window_count failed: {}",
+                String::from_utf8_lossy(&out.stderr).trim()
+            ));
+            u32::MAX
+        }
+        Err(e) => {
+            log_to_detect_file(&format!("window_count error: {}", e));
+            u32::MAX
+        }
+    }
+}
+
+/// Find the precompiled window_count binary.
+fn find_window_count_binary() -> Option<std::path::PathBuf> {
+    if let Ok(exe) = std::env::current_exe() {
+        let beside_exe = exe.parent().unwrap_or(exe.as_ref()).join("window_count");
+        if beside_exe.exists() {
+            return Some(beside_exe);
+        }
+    }
+    let dev_path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("bin/window_count");
+    if dev_path.exists() {
+        return Some(dev_path);
+    }
+    None
+}
+
+/// Log to the call-detect file (for use outside the detection loop thread).
+fn log_to_detect_file(msg: &str) {
+    use std::io::Write;
+    if let Some(home) = dirs::home_dir() {
+        let path = home.join(".minutes/logs/call-detect.log");
+        if let Ok(mut f) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&path)
+        {
+            writeln!(f, "[{}] {}", chrono::Local::now().format("%H:%M:%S"), msg).ok();
         }
     }
 }
