@@ -9,207 +9,178 @@
 
     body {
       font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue', sans-serif;
-      background: #1c1c1e;
+      background: rgba(28, 28, 30, 0.96);
       color: #f5f5f7;
-      padding: 20px;
       height: 100vh;
       display: flex;
-      flex-direction: column;
+      align-items: center;
       -webkit-user-select: none;
       user-select: none;
-      border: 1px solid #38383a;
-      border-radius: 10px;
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: 9px;
       overflow: hidden;
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
     }
 
-    .header {
+    .bar {
       display: flex;
-      align-items: flex-start;
-      justify-content: space-between;
-      gap: 12px;
-    }
-
-    .call-info {
-      display: flex;
-      align-items: flex-start;
+      align-items: center;
       gap: 10px;
-      min-width: 0;
-      flex: 1;
+      padding: 0 14px;
+      width: 100%;
+      height: 100%;
     }
 
-    .call-icon {
-      font-size: 16px;
-      line-height: 1.3;
+    .icon {
       flex-shrink: 0;
+      opacity: 0.55;
     }
 
-    .call-text {
-      min-width: 0;
-    }
-
-    .call-title {
-      font-size: 15px;
-      font-weight: 600;
-      color: #f5f5f7;
+    .label {
+      font-size: 12.5px;
+      font-weight: 400;
+      color: #a1a1a6;
       white-space: nowrap;
       overflow: hidden;
       text-overflow: ellipsis;
-      line-height: 1.3;
+      flex: 1;
+      letter-spacing: -0.01em;
     }
 
-    .call-subtitle {
-      font-size: 13px;
-      color: #8e8e93;
-      margin-top: 2px;
+    .app-name {
+      color: #e5e5ea;
+      font-weight: 500;
     }
 
-    .close-btn {
-      padding: 2px 8px;
-      border-radius: 6px;
-      border: none;
-      background: transparent;
-      color: #636366;
-      font-size: 14px;
-      cursor: pointer;
-      line-height: 1;
+    .sep {
+      width: 1px;
+      height: 14px;
+      background: rgba(255, 255, 255, 0.08);
       flex-shrink: 0;
     }
 
-    .close-btn:hover { color: #86868b; background: #38383a; }
-
-    .actions {
-      display: flex;
-      gap: 8px;
-      margin-top: 16px;
+    .action {
+      font-family: inherit;
+      font-size: 12.5px;
+      font-weight: 500;
+      color: #64d2ff;
+      background: none;
+      border: none;
+      cursor: pointer;
+      padding: 3px 0;
+      white-space: nowrap;
+      letter-spacing: -0.01em;
+      transition: color 0.1s;
+      flex-shrink: 0;
     }
 
-    .btn {
-      padding: 8px 16px;
-      border-radius: 6px;
-      border: none;
+    .action:hover { color: #99e4ff; }
+    .action:active { color: #40c8f0; }
+    .action:disabled { color: #48484a; cursor: default; }
+
+    .close {
       font-family: inherit;
       font-size: 13px;
-      font-weight: 500;
+      color: #48484a;
+      background: none;
+      border: none;
       cursor: pointer;
-      transition: all 0.12s ease;
-      min-height: 44px;
-      display: flex;
-      align-items: center;
-      justify-content: center;
+      padding: 2px;
+      line-height: 1;
+      flex-shrink: 0;
+      transition: color 0.1s;
     }
 
-    .btn-primary {
-      background: #ef4444;
-      color: #fff;
-      flex: 1;
-    }
-
-    .btn-primary:hover { background: #f87171; }
-    .btn-primary:active { background: #dc2626; transform: scale(0.97); }
-    .btn-primary:disabled { background: #38383a; color: #636366; cursor: default; transform: none; }
-
-    .btn-secondary {
-      background: transparent;
-      color: #86868b;
-      border: 1px solid #38383a;
-    }
-
-    .btn-secondary:hover { background: #38383a; color: #f5f5f7; }
-    .btn-secondary:active { transform: scale(0.97); }
+    .close:hover { color: #8e8e93; }
 
     .error-text {
-      font-size: 12px;
+      position: fixed;
+      bottom: 4px;
+      left: 14px;
+      font-size: 10px;
       color: #ff453a;
-      margin-top: 8px;
       display: none;
     }
 
     .toast {
       position: fixed;
-      bottom: 12px;
+      top: 50%;
       left: 50%;
-      transform: translateX(-50%) translateY(30px);
-      background: #30d158;
+      transform: translate(-50%, -50%) scale(0.95);
+      background: rgba(48, 209, 88, 0.9);
       color: #000;
-      font-size: 12px;
+      font-size: 11px;
       font-weight: 600;
-      padding: 6px 14px;
-      border-radius: 20px;
+      padding: 4px 12px;
+      border-radius: 14px;
       opacity: 0;
-      transition: all 0.25s ease;
+      transition: all 0.2s ease;
       pointer-events: none;
       white-space: nowrap;
     }
 
     .toast.show {
       opacity: 1;
-      transform: translateX(-50%) translateY(0);
+      transform: translate(-50%, -50%) scale(1);
     }
 
     @keyframes slideIn {
-      from { opacity: 0; transform: translateY(-12px); }
+      from { opacity: 0; transform: translateY(-6px); }
       to { opacity: 1; transform: translateY(0); }
     }
 
-    body {
-      animation: slideIn 300ms ease-out;
-    }
+    body { animation: slideIn 200ms ease-out; }
   </style>
 </head>
 <body role="alertdialog" aria-label="Call detected">
-  <div class="header">
-    <div class="call-info">
-      <span class="call-icon">🎙</span>
-      <div class="call-text">
-        <div class="call-title" id="title"></div>
-        <div class="call-subtitle">Click to start transcribing</div>
-      </div>
-    </div>
-    <button class="close-btn" id="close-btn" aria-label="Dismiss">✕</button>
-  </div>
-  <div class="actions">
-    <button class="btn btn-primary" id="record-btn" autofocus>Start Recording</button>
-    <button class="btn btn-secondary" id="dismiss-btn">Dismiss</button>
+  <div class="bar">
+    <!-- Waveform icon matching the Minutes tray icon -->
+    <svg class="icon" width="14" height="14" viewBox="0 0 24 24" fill="none">
+      <rect x="4" y="9" width="2.5" height="6" rx="1.25" fill="#e5e5ea"/>
+      <rect x="8.5" y="5" width="2.5" height="14" rx="1.25" fill="#e5e5ea"/>
+      <rect x="13" y="3" width="2.5" height="18" rx="1.25" fill="#e5e5ea"/>
+      <rect x="17.5" y="7" width="2.5" height="10" rx="1.25" fill="#e5e5ea"/>
+    </svg>
+    <div class="label"><span class="app-name" id="app-name"></span> call detected</div>
+    <div class="sep"></div>
+    <button class="action" id="record-btn" autofocus>Record</button>
+    <button class="close" id="close-btn" aria-label="Dismiss">&#x2715;</button>
   </div>
   <div class="error-text" id="error-text"></div>
-  <div class="toast" id="toast">Recording started ✓</div>
+  <div class="toast" id="toast">Recording &#x2713;</div>
 
   <script>
     const { invoke } = window.__TAURI__.core;
     const { getCurrentWebviewWindow } = window.__TAURI__.webviewWindow;
 
-    // Parse app name from URL fragment
     const appName = decodeURIComponent(window.location.hash.slice(1)) || 'Call';
 
-    // Set content
-    const titleEl = document.getElementById('title');
+    const appNameEl = document.getElementById('app-name');
     const recordBtn = document.getElementById('record-btn');
     const errorEl = document.getElementById('error-text');
     const toast = document.getElementById('toast');
 
-    titleEl.textContent = appName + ' call detected';
+    appNameEl.textContent = appName;
 
-    // Auto-focus record button
     recordBtn.focus();
 
-    // Actions
     async function startRecording() {
       recordBtn.disabled = true;
-      recordBtn.textContent = 'Starting...';
+      recordBtn.textContent = '\u2026';
 
       try {
         await invoke('cmd_start_recording');
         await invoke('cmd_mark_call_triggered', { appName: appName });
 
-        // Success toast
         toast.classList.add('show');
-        setTimeout(() => {
+        setTimeout(function() {
           toast.classList.remove('show');
-          setTimeout(() => getCurrentWebviewWindow().close(), 200);
-        }, 600);
+          setTimeout(function() { getCurrentWebviewWindow().close(); }, 150);
+        }, 400);
       } catch (e) {
         recordBtn.disabled = false;
-        recordBtn.textContent = 'Start Recording';
+        recordBtn.textContent = 'Record';
         errorEl.textContent = String(e);
         errorEl.style.display = 'block';
       }
@@ -220,19 +191,16 @@
     }
 
     recordBtn.addEventListener('click', startRecording);
-    document.getElementById('dismiss-btn').addEventListener('click', dismiss);
     document.getElementById('close-btn').addEventListener('click', dismiss);
 
-    // Keyboard: Escape to dismiss
-    document.addEventListener('keydown', (e) => {
+    document.addEventListener('keydown', function(e) {
       if (e.key === 'Escape') dismiss();
     });
 
-    // Auto-dismiss after 30 seconds
-    setTimeout(() => {
-      document.body.style.transition = 'opacity 300ms ease-out';
+    setTimeout(function() {
+      document.body.style.transition = 'opacity 250ms ease-out';
       document.body.style.opacity = '0';
-      setTimeout(() => getCurrentWebviewWindow().close(), 300);
+      setTimeout(function() { getCurrentWebviewWindow().close(); }, 250);
     }, 30000);
   </script>
 </body>

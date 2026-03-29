@@ -298,11 +298,11 @@ pub fn show_call_prompt(app: &tauri::AppHandle, app_name: &str) {
         .collect::<String>();
     let url = format!("call-prompt.html#{}", encoded);
 
-    let (pos_x, pos_y) = get_top_right_position(340.0, 120.0);
+    let (pos_x, pos_y) = get_top_right_position(280.0, 36.0);
 
     match WebviewWindowBuilder::new(app, "call-prompt", WebviewUrl::App(url.into()))
         .title("Call Detected")
-        .inner_size(340.0, 120.0)
+        .inner_size(280.0, 36.0)
         .position(pos_x, pos_y)
         .resizable(false)
         .decorations(false)
