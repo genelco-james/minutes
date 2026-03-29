@@ -410,21 +410,23 @@ pub fn show_saved_toast(app: &tauri::AppHandle) {
 }
 
 /// Calculate position for top-right placement, 16px from screen edge.
-/// Get the main screen's logical width via system_profiler.
+/// Get the main screen's logical width via NSScreen.
 fn get_main_screen_width() -> Option<f64> {
-    // Use NSScreen via osascript for accurate logical pixel width
+    let script = r#"use framework "AppKit"
+set mainScreen to current application's NSScreen's mainScreen()
+set frame to mainScreen's frame()
+set w to item 1 of item 2 of frame
+return w as integer"#;
     let output = std::process::Command::new("osascript")
         .arg("-e")
-        .arg(r#"tell application "Finder" to get bounds of window of desktop"#)
+        .arg(script)
         .output()
         .ok()?;
     if output.status.success() {
-        // Returns: "0, 0, WIDTH, HEIGHT"
-        let text = String::from_utf8_lossy(&output.stdout);
-        let parts: Vec<&str> = text.trim().split(", ").collect();
-        if parts.len() >= 3 {
-            return parts[2].parse::<f64>().ok();
-        }
+        return String::from_utf8_lossy(&output.stdout)
+            .trim()
+            .parse::<f64>()
+            .ok();
     }
     None
 }
@@ -433,8 +435,9 @@ fn get_top_right_position(width: f64, height: f64) -> (f64, f64) {
     let _ = height;
     // Query actual screen width via NSScreen (macOS)
     let screen_width = get_main_screen_width().unwrap_or(1440.0);
-    let x = screen_width - width - 16.0;
-    let y = 38.0; // Below the macOS menu bar
+    // Center horizontally with a right-side bias (avoids menu bar icons and notch)
+    let x = screen_width / 2.0 + 100.0;
+    let y = 44.0; // Below menu bar + notch on modern MacBooks
     (x, y)
 }
 
