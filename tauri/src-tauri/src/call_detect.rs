@@ -89,6 +89,8 @@ impl CallDetector {
             let mut was_recording = false;
             // Prevent re-showing countdown popup every poll cycle
             let mut countdown_shown = false;
+            // Window count when we started monitoring (for delta-based detection)
+            let mut initial_window_count: Option<u32> = None;
 
             loop {
                 std::thread::sleep(interval);
@@ -108,8 +110,15 @@ impl CallDetector {
                     // Only monitor for call end if THIS recording was started via call prompt
                     if let Some(ref app_name) = triggered_app {
                         let meeting_active = if has_window_detection(app_name) {
-                            // Primary signal: check if the call app's meeting window is open
-                            has_active_meeting_window(app_name)
+                            // Count-based detection: record initial window count, detect drops
+                            let current_count = get_window_count(app_name);
+                            let initial = *initial_window_count.get_or_insert(current_count);
+                            eprintln!(
+                                "[call-detect] {} windows: initial={}, current={}",
+                                app_name, initial, current_count
+                            );
+                            // Meeting is still active if window count hasn't dropped
+                            current_count >= initial
                         } else {
                             // Fallback: use mic activity with grace period
                             if is_mic_in_use() {
@@ -138,6 +147,7 @@ impl CallDetector {
                     } else {
                         // call_triggered_app was cleared (user clicked "Continue")
                         countdown_shown = false;
+                        initial_window_count = None;
                     }
                     // If recording was started manually (triggered_app is None), do nothing
                 } else {
@@ -155,6 +165,7 @@ impl CallDetector {
                     }
                     was_recording = false;
                     countdown_shown = false;
+                    initial_window_count = None;
 
                     if let Some((display_name, process_name)) = self.detect_active_call() {
                         if !self.in_cooldown(&process_name) {
@@ -259,68 +270,41 @@ fn has_window_detection(app_name: &str) -> bool {
     )
 }
 
-/// Check if a specific call app has an active meeting window.
-/// Uses macOS System Events via AppleScript to inspect window titles.
-/// Returns `true` if a meeting window is found, `false` if not.
+/// Get the number of windows for a specific call app's process.
+/// Used for delta-based detection: record count at start, detect drops.
 ///
 /// Performance: ~5-10ms per call. Runs every 3s only while recording.
-fn has_active_meeting_window(app_name: &str) -> bool {
+fn get_window_count(app_name: &str) -> u32 {
     let script = match app_name {
-        // Teams: check both v1 ("Microsoft Teams") and v2 ("MSTeams") process names.
-        // During a meeting, Teams has multiple windows; when you leave, the meeting
-        // window closes. We check for meeting-related window names or 2+ windows.
+        // Teams: check both v1 and v2 process names
         "Microsoft Teams" | "Microsoft Teams (work or school)" | "MSTeams" | "Teams" => {
             r#"tell application "System Events"
     set teamNames to {"Microsoft Teams", "MSTeams"}
     repeat with t in teamNames
-        if exists process t then
-            set winCount to count of windows of process t
-            if winCount > 0 then
-                set winNames to name of every window of process t
-                repeat with w in winNames
-                    if w contains "Meeting" or w contains "Call" then return "1"
-                end repeat
-                if winCount >= 2 then return "1"
-            end if
-        end if
+        if exists process t then return count of windows of process t
     end repeat
-    return "0"
+    return 0
 end tell"#
         }
-        // Zoom: meeting window is named "Zoom Meeting" or "Zoom Webinar"
         "zoom.us" | "Zoom" => {
             r#"tell application "System Events"
-    if exists process "zoom.us" then
-        set winNames to name of every window of process "zoom.us"
-        repeat with w in winNames
-            if w contains "Zoom Meeting" or w contains "Zoom Webinar" then return "1"
-        end repeat
-    end if
-    return "0"
+    if exists process "zoom.us" then return count of windows of process "zoom.us"
+    return 0
 end tell"#
         }
-        // FaceTime: has a window only during an active call
         "FaceTime" => {
             r#"tell application "System Events"
-    if exists process "FaceTime" then
-        if (count of windows of process "FaceTime") > 0 then return "1"
-    end if
-    return "0"
+    if exists process "FaceTime" then return count of windows of process "FaceTime"
+    return 0
 end tell"#
         }
-        // Slack: huddle windows
         "Slack" => {
             r#"tell application "System Events"
-    if exists process "Slack" then
-        set winNames to name of every window of process "Slack"
-        repeat with w in winNames
-            if w contains "Huddle" then return "1"
-        end repeat
-    end if
-    return "0"
+    if exists process "Slack" then return count of windows of process "Slack"
+    return 0
 end tell"#
         }
-        _ => return true, // Unknown app: assume active (fallback to mic silence)
+        _ => return u32::MAX, // Unknown app: return high count so delta never triggers
     };
 
     let output = std::process::Command::new("osascript")
@@ -330,12 +314,14 @@ end tell"#
 
     match output {
         Ok(out) if out.status.success() => {
-            String::from_utf8_lossy(&out.stdout).trim() == "1"
+            String::from_utf8_lossy(&out.stdout)
+                .trim()
+                .parse::<u32>()
+                .unwrap_or(u32::MAX)
         }
         _ => {
-            // If AppleScript fails, assume meeting is still active to avoid false stops
-            eprintln!("[call-detect] window check failed for {} — assuming active", app_name);
-            true
+            eprintln!("[call-detect] window count check failed for {}", app_name);
+            u32::MAX // Assume high count to avoid false stops
         }
     }
 }

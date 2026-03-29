@@ -172,12 +172,7 @@
       try {
         await invoke('cmd_mark_call_triggered', { appName: appName });
         await invoke('cmd_start_recording');
-
-        toast.classList.add('show');
-        setTimeout(function() {
-          toast.classList.remove('show');
-          setTimeout(function() { getCurrentWebviewWindow().close(); }, 150);
-        }, 400);
+        getCurrentWebviewWindow().close();
       } catch (e) {
         recordBtn.disabled = false;
         recordBtn.textContent = 'Record';

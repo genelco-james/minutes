@@ -465,28 +465,11 @@ pub fn open_target(app_handle: &tauri::AppHandle, target: &str) -> Result<(), St
 
 fn maybe_show_completion_notification(
     app_handle: &tauri::AppHandle,
-    notifications_enabled: &Arc<AtomicBool>,
-    notice: &OutputNotice,
+    _notifications_enabled: &Arc<AtomicBool>,
+    _notice: &OutputNotice,
 ) {
-    if !notifications_enabled.load(Ordering::Relaxed) {
-        return;
-    }
-
-    let should_notify = app_handle
-        .get_webview_window("main")
-        .map(|window| {
-            let visible = window.is_visible().ok().unwrap_or(false);
-            let focused = window.is_focused().ok().unwrap_or(false);
-            !(visible && focused)
-        })
-        .unwrap_or(true);
-
-    if !should_notify {
-        return;
-    }
-
-    let body = format!("{} {}", notice.detail, display_path(&notice.path));
-    show_user_notification(app_handle, &notice.title, &body);
+    // Show a native toast popup instead of AppleScript notification
+    crate::show_saved_toast(app_handle);
 }
 
 pub fn show_user_notification(app_handle: &tauri::AppHandle, title: &str, body: &str) {

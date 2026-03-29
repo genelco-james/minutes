@@ -360,6 +360,30 @@ pub fn show_stop_countdown(app: &tauri::AppHandle) {
     }
 }
 
+/// Show a brief "Recording saved" toast that auto-dismisses after 3 seconds.
+pub fn show_saved_toast(app: &tauri::AppHandle) {
+    if let Some(win) = app.get_webview_window("saved-toast") {
+        win.close().ok();
+    }
+
+    let (pos_x, pos_y) = get_top_right_position(200.0, 36.0);
+
+    match WebviewWindowBuilder::new(app, "saved-toast", WebviewUrl::App("saved-toast.html".into()))
+        .title("Saved")
+        .inner_size(200.0, 36.0)
+        .position(pos_x, pos_y)
+        .resizable(false)
+        .decorations(false)
+        .always_on_top(true)
+        .focused(false)
+        .skip_taskbar(true)
+        .build()
+    {
+        Ok(_) => {}
+        Err(e) => eprintln!("[toast] failed to show saved toast: {}", e),
+    }
+}
+
 /// Calculate position for top-right placement, 16px from screen edge.
 fn get_top_right_position(width: f64, height: f64) -> (f64, f64) {
     let _ = height;

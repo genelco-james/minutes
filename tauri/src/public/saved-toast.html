@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Saved</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue', sans-serif;
+      background: rgba(28, 28, 30, 0.96);
+      color: #f5f5f7;
+      height: 100vh;
+      display: flex;
+      align-items: center;
+      -webkit-user-select: none;
+      user-select: none;
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: 9px;
+      overflow: hidden;
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
+    }
+    .bar {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 0 14px;
+      width: 100%;
+      height: 100%;
+    }
+    .icon { flex-shrink: 0; }
+    .label {
+      font-size: 12.5px;
+      font-weight: 500;
+      color: #34d399;
+      white-space: nowrap;
+      letter-spacing: -0.01em;
+    }
+    @keyframes slideIn {
+      from { opacity: 0; transform: translateY(-6px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+    body { animation: slideIn 200ms ease-out; }
+  </style>
+</head>
+<body>
+  <div class="bar">
+    <svg class="icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#34d399" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+      <polyline points="20 6 9 17 4 12"/>
+    </svg>
+    <div class="label">Recording saved</div>
+  </div>
+  <script>
+    var getCurrentWebviewWindow = window.__TAURI__.webviewWindow.getCurrentWebviewWindow;
+    setTimeout(function() {
+      document.body.style.transition = 'opacity 250ms ease-out';
+      document.body.style.opacity = '0';
+      setTimeout(function() { getCurrentWebviewWindow().close(); }, 250);
+    }, 3000);
+  </script>
+</body>
+</html>
