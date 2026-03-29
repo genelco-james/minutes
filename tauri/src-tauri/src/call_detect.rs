@@ -158,10 +158,15 @@ impl CallDetector {
                     // Clear call_triggered_app only on a true recording→stopped transition,
                     // NOT when recording hasn't started yet (avoids race condition where
                     // cmd_mark_call_triggered runs before recording flag is set)
-                    if was_recording && triggered_app.is_some() {
-                        if let Ok(mut g) = call_triggered_app.lock() {
-                            *g = None;
+                    if was_recording {
+                        if triggered_app.is_some() {
+                            if let Ok(mut g) = call_triggered_app.lock() {
+                                *g = None;
+                            }
                         }
+                        // Clear ALL cooldowns so back-to-back meetings are detected immediately
+                        self.clear_all_cooldowns();
+                        eprintln!("[call-detect] recording stopped — cooldowns cleared for back-to-back meetings");
                     }
                     was_recording = false;
                     countdown_shown = false;
@@ -238,6 +243,11 @@ impl CallDetector {
     fn clear_cooldown(&self, process_name: &str) {
         let mut entries = self.last_notified.lock().unwrap();
         entries.retain(|(name, _)| name != process_name);
+    }
+
+    fn clear_all_cooldowns(&self) {
+        let mut entries = self.last_notified.lock().unwrap();
+        entries.clear();
     }
 }
 
