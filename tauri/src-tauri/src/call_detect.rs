@@ -91,6 +91,27 @@ impl CallDetector {
         }
 
         std::thread::spawn(move || {
+            // Write detection logs to file so we can debug regardless of launch method
+            use std::io::Write;
+            let log_path = dirs::home_dir()
+                .unwrap_or_default()
+                .join(".minutes/logs/call-detect.log");
+            let mut log_file = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&log_path)
+                .ok();
+            macro_rules! dlog {
+                ($($arg:tt)*) => {{
+                    let msg = format!($($arg)*);
+                    eprintln!("{}", msg);
+                    if let Some(ref mut f) = log_file {
+                        writeln!(f, "[{}] {}", chrono::Local::now().format("%H:%M:%S"), msg).ok();
+                        f.flush().ok();
+                    }
+                }};
+            }
+
             // Brief delay to let the app finish launching
             std::thread::sleep(Duration::from_secs(2));
 
@@ -133,7 +154,7 @@ impl CallDetector {
                         _ => break,
                     }
                 }
-                eprintln!("[call-detect] mic_monitor ready, initial mic_active={}", mic_active);
+                dlog!("[call-detect] mic_monitor ready, initial mic_active={}", mic_active);
                 (lines, child)
             });
 
@@ -158,7 +179,7 @@ impl CallDetector {
             // If the mic is already active (user joined meeting before app started),
             // we need to detect right away.
             if mic_active {
-                eprintln!("[call-detect] mic already active at startup — running immediate detection");
+                dlog!("[call-detect] mic already active at startup — running immediate detection");
             }
             let mut first_iteration = true;
 
@@ -171,7 +192,7 @@ impl CallDetector {
                     match mic_rx.recv_timeout(interval) {
                         Ok(state) => {
                             mic_active = state;
-                            eprintln!("[call-detect] mic event: {}", if mic_active { "ON" } else { "OFF" });
+                            dlog!("[call-detect] mic event: {}", if mic_active { "ON" } else { "OFF" });
                         }
                         Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
                             // Periodic check for window state during recording
@@ -198,7 +219,7 @@ impl CallDetector {
                 static TICK: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
                 let tick = TICK.fetch_add(1, Ordering::Relaxed);
                 if tick % 10 == 0 {
-                    eprintln!(
+                    dlog!(
                         "[call-detect] tick={} mic={} recording={} event_driven={}",
                         tick, mic_active, recording.load(Ordering::Relaxed), event_driven
                     );
@@ -281,13 +302,17 @@ impl CallDetector {
                     // 2. If mic is off: still check for Teams meeting windows
                     //    (user may be muted when joining)
                     let detection = if mic_active {
-                        self.detect_active_call(true)
+                        let result = self.detect_active_call(true);
+                        if result.is_none() && tick % 10 == 0 {
+                            dlog!("[call-detect] mic ON but no matching app found in config");
+                        }
+                        result
                     } else {
                         // Mic-off fallback: check Teams meeting window directly.
                         // Catches meetings where user joins muted.
                         let title = get_teams_meeting_title();
                         if title.is_some() {
-                            eprintln!("[call-detect] mic off but Teams meeting window found: {:?}", title);
+                            dlog!("[call-detect] mic off but Teams meeting window found: {:?}", title);
                             Some(("Teams".to_string(), "com.microsoft.teams2".to_string()))
                         } else {
                             None
@@ -295,19 +320,28 @@ impl CallDetector {
                     };
 
                     if let Some((display_name, process_name)) = detection {
+                        dlog!("[call-detect] app detected: {} ({})", display_name, process_name);
                         if !self.in_cooldown(&process_name) {
                             let is_teams = is_teams_app(&process_name);
+
+                            // For Teams: verify an actual meeting is happening.
+                            // Check window count (doesn't need Accessibility permission).
+                            // If window count is still at baseline (1), it's a false positive.
+                            if is_teams && !mic_active {
+                                let wc = get_window_count(&process_name);
+                                if wc <= 1 {
+                                    dlog!("[call-detect] Teams has {} window(s), mic off — skipping", wc);
+                                    continue;
+                                }
+                            }
+
+                            // Try to extract meeting title (best-effort, may fail without Accessibility perms)
                             let meeting_title = if is_teams {
                                 get_teams_meeting_title()
                             } else {
                                 None
                             };
-
-                            if is_teams && meeting_title.is_none() {
-                                // Teams process is running but no meeting window — false positive
-                                eprintln!("[call-detect] Teams running but no meeting window — skipping");
-                                continue;
-                            }
+                            dlog!("[call-detect] meeting_title={:?}", meeting_title);
 
                             eprintln!(
                                 "[call-detect] detected: {} ({})",

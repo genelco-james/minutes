@@ -288,6 +288,17 @@ fn show_meeting_prompt(app: &tauri::AppHandle, event: &minutes_core::calendar::C
     }
 }
 
+/// Append a line to the call-detect log file for debugging.
+fn log_to_detect_file(msg: &str) {
+    use std::io::Write;
+    if let Some(home) = dirs::home_dir() {
+        let path = home.join(".minutes/logs/call-detect.log");
+        if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&path) {
+            writeln!(f, "[{}] {}", chrono::Local::now().format("%H:%M:%S"), msg).ok();
+        }
+    }
+}
+
 /// Show a floating overlay prompt when a call is detected.
 /// The overlay has "Start Recording" + "Dismiss" buttons.
 pub fn show_call_prompt(app: &tauri::AppHandle, app_name: &str) {
@@ -335,8 +346,12 @@ pub fn show_call_prompt(app: &tauri::AppHandle, app_name: &str) {
             win.set_always_on_top(true).ok();
             win.set_focus().ok();
             eprintln!("[call-detect] prompt shown for: {}", app_name);
+            log_to_detect_file(&format!("prompt window created OK for: {}", app_name));
         }
-        Err(e) => eprintln!("[call-detect] failed to show prompt: {}", e),
+        Err(e) => {
+            eprintln!("[call-detect] failed to show prompt: {}", e);
+            log_to_detect_file(&format!("FAILED to create prompt window: {}", e));
+        }
     }
 }
 
@@ -395,15 +410,29 @@ pub fn show_saved_toast(app: &tauri::AppHandle) {
 }
 
 /// Calculate position for top-right placement, 16px from screen edge.
+/// Get the main screen's logical width via system_profiler.
+fn get_main_screen_width() -> Option<f64> {
+    // Use NSScreen via osascript for accurate logical pixel width
+    let output = std::process::Command::new("osascript")
+        .arg("-e")
+        .arg(r#"tell application "Finder" to get bounds of window of desktop"#)
+        .output()
+        .ok()?;
+    if output.status.success() {
+        // Returns: "0, 0, WIDTH, HEIGHT"
+        let text = String::from_utf8_lossy(&output.stdout);
+        let parts: Vec<&str> = text.trim().split(", ").collect();
+        if parts.len() >= 3 {
+            return parts[2].parse::<f64>().ok();
+        }
+    }
+    None
+}
+
 fn get_top_right_position(width: f64, height: f64) -> (f64, f64) {
     let _ = height;
-    // Default to a reasonable position; Tauri doesn't expose screen size easily
-    // from a non-window context, so we use a heuristic for common displays.
-    // The window will be placed at x=screen_width - window_width - 16, y=38 (below menu bar).
-    // For a 1440px-wide MacBook display at 2x: logical width ~1440
-    // For a 1920px-wide external: logical width ~1920
-    // We'll use 1440 as a safe default — the window stays visible on any Mac screen.
-    let screen_width = 1440.0;
+    // Query actual screen width via NSScreen (macOS)
+    let screen_width = get_main_screen_width().unwrap_or(1440.0);
     let x = screen_width - width - 16.0;
     let y = 38.0; // Below the macOS menu bar
     (x, y)
