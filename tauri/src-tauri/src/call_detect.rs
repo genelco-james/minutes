@@ -31,12 +31,6 @@ pub struct CallDetectedPayload {
     pub process_name: String,
 }
 
-/// Payload emitted to the frontend when a call-triggered recording auto-stops.
-#[derive(Clone, serde::Serialize)]
-pub struct CallEndedPayload {
-    pub app_name: String,
-}
-
 /// Shared state for call detection, accessible from Tauri commands.
 /// Tracks which app triggered the current recording (if any) so the
 /// detection loop can monitor for call end and auto-stop.
@@ -67,7 +61,7 @@ impl CallDetector {
         app: tauri::AppHandle,
         recording: Arc<AtomicBool>,
         processing: Arc<AtomicBool>,
-        stop_flag: Arc<AtomicBool>,
+        _stop_flag: Arc<AtomicBool>,
         call_triggered_app: Arc<Mutex<Option<String>>>,
     ) {
         if !self.config.enabled {
@@ -93,6 +87,8 @@ impl CallDetector {
 
             // Track previous recording state to detect recording→stopped transitions
             let mut was_recording = false;
+            // Prevent re-showing countdown popup every poll cycle
+            let mut countdown_shown = false;
 
             loop {
                 std::thread::sleep(interval);
@@ -125,45 +121,23 @@ impl CallDetector {
                             }
                         };
 
-                        if !meeting_active {
+                        if !meeting_active && !countdown_shown {
                             eprintln!(
-                                "[call-detect] meeting ended for {} — auto-stopping recording",
+                                "[call-detect] meeting ended for {} — showing stop countdown",
                                 app_name
                             );
 
-                            // Auto-stop the recording
-                            if let Err(e) =
-                                crate::commands::request_stop(&recording, &stop_flag)
-                            {
-                                eprintln!("[call-detect] auto-stop failed: {}", e);
-                            }
+                            // Show countdown popup (user gets 10s to click "Continue")
+                            crate::show_stop_countdown(&app);
+                            countdown_shown = true;
 
-                            // Show completion notification
-                            let display = display_name_for(app_name);
-                            crate::commands::show_user_notification(
-                                &app,
-                                "Recording saved",
-                                &format!("{} call ended", display),
-                            );
-
-                            // Emit event to frontend
-                            app.emit(
-                                "call:ended",
-                                CallEndedPayload {
-                                    app_name: display,
-                                },
-                            )
-                            .ok();
-
-                            // Clear triggered app state
-                            if let Ok(mut g) = call_triggered_app.lock() {
-                                *g = None;
-                            }
-
-                            // Reset cooldown for this app so a new call can be detected
+                            // Reset cooldown for this app so a new call can be detected later
                             self.clear_cooldown(app_name);
                             silence_miss_count = 0;
                         }
+                    } else {
+                        // call_triggered_app was cleared (user clicked "Continue")
+                        countdown_shown = false;
                     }
                     // If recording was started manually (triggered_app is None), do nothing
                 } else {
@@ -180,6 +154,7 @@ impl CallDetector {
                         }
                     }
                     was_recording = false;
+                    countdown_shown = false;
 
                     if let Some((display_name, process_name)) = self.detect_active_call() {
                         if !self.in_cooldown(&process_name) {
@@ -259,7 +234,7 @@ impl CallDetector {
 fn display_name_for(process: &str) -> String {
     match process {
         "zoom.us" => "Zoom".into(),
-        "Microsoft Teams" | "Microsoft Teams (work or school)" => "Teams".into(),
+        "Microsoft Teams" | "Microsoft Teams (work or school)" | "MSTeams" => "Teams".into(),
         "FaceTime" => "FaceTime".into(),
         "Webex" => "Webex".into(),
         "Slack" => "Slack".into(),
@@ -275,6 +250,7 @@ fn has_window_detection(app_name: &str) -> bool {
         app_name,
         "Microsoft Teams"
             | "Microsoft Teams (work or school)"
+            | "MSTeams"
             | "Teams"
             | "zoom.us"
             | "Zoom"
@@ -290,22 +266,24 @@ fn has_window_detection(app_name: &str) -> bool {
 /// Performance: ~5-10ms per call. Runs every 3s only while recording.
 fn has_active_meeting_window(app_name: &str) -> bool {
     let script = match app_name {
-        // Teams: when in a meeting, the app has a window. When you leave, the
-        // meeting window closes. We check for any window on the process.
-        "Microsoft Teams" | "Microsoft Teams (work or school)" | "Teams" => {
+        // Teams: check both v1 ("Microsoft Teams") and v2 ("MSTeams") process names.
+        // During a meeting, Teams has multiple windows; when you leave, the meeting
+        // window closes. We check for meeting-related window names or 2+ windows.
+        "Microsoft Teams" | "Microsoft Teams (work or school)" | "MSTeams" | "Teams" => {
             r#"tell application "System Events"
-    if exists process "Microsoft Teams" then
-        set winCount to count of windows of process "Microsoft Teams"
-        if winCount > 0 then
-            set winNames to name of every window of process "Microsoft Teams"
-            repeat with w in winNames
-                if w contains "Meeting" or w contains "Call" then return "1"
-            end repeat
-            -- Also check for the in-call toolbar window (no specific title)
-            -- Teams shows at least 2 windows during a call
-            if winCount >= 2 then return "1"
+    set teamNames to {"Microsoft Teams", "MSTeams"}
+    repeat with t in teamNames
+        if exists process t then
+            set winCount to count of windows of process t
+            if winCount > 0 then
+                set winNames to name of every window of process t
+                repeat with w in winNames
+                    if w contains "Meeting" or w contains "Call" then return "1"
+                end repeat
+                if winCount >= 2 then return "1"
+            end if
         end if
-    end if
+    end repeat
     return "0"
 end tell"#
         }
@@ -492,6 +470,7 @@ mod tests {
     fn display_names() {
         assert_eq!(display_name_for("zoom.us"), "Zoom");
         assert_eq!(display_name_for("Microsoft Teams"), "Teams");
+        assert_eq!(display_name_for("MSTeams"), "Teams");
         assert_eq!(display_name_for("FaceTime"), "FaceTime");
         assert_eq!(display_name_for("SomeOtherApp"), "SomeOtherApp");
     }
@@ -499,6 +478,7 @@ mod tests {
     #[test]
     fn window_detection_mapping() {
         assert!(has_window_detection("Microsoft Teams"));
+        assert!(has_window_detection("MSTeams"));
         assert!(has_window_detection("Teams"));
         assert!(has_window_detection("zoom.us"));
         assert!(has_window_detection("FaceTime"));

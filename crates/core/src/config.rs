@@ -273,6 +273,7 @@ impl Default for CallDetectionConfig {
             apps: vec![
                 "zoom.us".into(),
                 "Microsoft Teams".into(),
+                "MSTeams".into(),
                 "FaceTime".into(),
                 "Webex".into(),
                 "Slack".into(),

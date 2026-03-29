@@ -334,6 +334,32 @@ pub fn show_call_prompt(app: &tauri::AppHandle, app_name: &str) {
     }
 }
 
+/// Show a floating countdown overlay when a call-triggered recording is about to stop.
+/// Gives the user 10 seconds to click "Continue" or let it auto-stop.
+pub fn show_stop_countdown(app: &tauri::AppHandle) {
+    // Close any existing countdown window
+    if let Some(win) = app.get_webview_window("stop-countdown") {
+        win.close().ok();
+    }
+
+    let (pos_x, pos_y) = get_top_right_position(300.0, 36.0);
+
+    match WebviewWindowBuilder::new(app, "stop-countdown", WebviewUrl::App("stop-countdown.html".into()))
+        .title("Stopping")
+        .inner_size(300.0, 36.0)
+        .position(pos_x, pos_y)
+        .resizable(false)
+        .decorations(false)
+        .always_on_top(true)
+        .focused(true)
+        .skip_taskbar(true)
+        .build()
+    {
+        Ok(_) => eprintln!("[call-detect] stop countdown shown"),
+        Err(e) => eprintln!("[call-detect] failed to show stop countdown: {}", e),
+    }
+}
+
 /// Calculate position for top-right placement, 16px from screen edge.
 fn get_top_right_position(width: f64, height: f64) -> (f64, f64) {
     let _ = height;
@@ -1106,6 +1132,7 @@ fn main() {
             commands::cmd_live_shortcut_settings,
             commands::cmd_set_live_shortcut,
             commands::cmd_mark_call_triggered,
+            commands::cmd_cancel_auto_stop,
         ])
         .run(tauri::generate_context!())
         .expect("error while running minutes app");

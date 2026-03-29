@@ -4,7 +4,7 @@ use std::path::Path;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::{Instant, SystemTime};
+use std::time::{Duration, Instant, SystemTime};
 use tauri::{Emitter, Manager};
 use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
 use tauri_plugin_shell::ShellExt;
@@ -1160,10 +1160,38 @@ pub fn start_recording(
     minutes_core::notes::save_recording_start().ok();
     eprintln!("[start_recording] {} started, capturing audio...", mode.noun());
 
+    // Emit recording-started event to frontend
+    app_handle
+        .emit(
+            "recording-status",
+            serde_json::json!({"recording": true, "elapsed_secs": 0}),
+        )
+        .ok();
+
+    // Spawn elapsed-time emitter (ticks every second while recording)
+    let app_for_timer = app_handle.clone();
+    let rec_for_timer = recording.clone();
+    std::thread::spawn(move || {
+        let mut secs = 0u64;
+        while rec_for_timer.load(Ordering::Relaxed) {
+            std::thread::sleep(Duration::from_secs(1));
+            secs += 1;
+            if rec_for_timer.load(Ordering::Relaxed) {
+                app_for_timer
+                    .emit(
+                        "recording-status",
+                        serde_json::json!({"recording": true, "elapsed_secs": secs}),
+                    )
+                    .ok();
+            }
+        }
+    });
+
     let mut remove_current_wav = false;
     match minutes_core::capture::record_to_wav(&wav_path, stop_flag, &config) {
         Ok(()) => {
             recording.store(false, Ordering::Relaxed);
+            app_handle.emit("recording-status", serde_json::json!({"recording": false})).ok();
             let should_discard = discard_short_hotkey_capture
                 .as_ref()
                 .map(|flag| flag.swap(false, Ordering::Relaxed))
@@ -1175,6 +1203,7 @@ pub fn start_recording(
                 processing.store(true, Ordering::Relaxed);
             }
             if !should_discard {
+                let app_for_progress = app_handle.clone();
                 match minutes_core::pipeline::process_with_progress(
                     &wav_path,
                     mode.content_type(),
@@ -1184,6 +1213,7 @@ pub fn start_recording(
                         let label = stage_label(stage, mode);
                         set_processing_stage(&processing_stage, Some(label));
                         let _ = minutes_core::pid::set_processing_status(Some(label), Some(mode));
+                        app_for_progress.emit("processing-status", serde_json::json!({"stage": label})).ok();
                     },
                 ) {
                     Ok(result) => {
@@ -1206,6 +1236,11 @@ pub fn start_recording(
                             &completion_notifications_enabled,
                             &notice,
                         );
+                        app_handle.emit("processing-status", serde_json::json!({"stage": "done"})).ok();
+                        app_handle.emit("latest-artifact", serde_json::json!({
+                            "path": result.path.display().to_string(),
+                            "title": result.title
+                        })).ok();
                         eprintln!(
                             "Saved {}: {} ({} words)",
                             mode.noun(),
@@ -1259,6 +1294,7 @@ pub fn start_recording(
         }
         Err(e) => {
             recording.store(false, Ordering::Relaxed);
+            app_handle.emit("recording-status", serde_json::json!({"recording": false})).ok();
             if let Some(saved) = preserve_failed_capture(&wav_path, &config) {
                 let detail = match mode {
                     CaptureMode::Meeting => {
@@ -1620,6 +1656,19 @@ pub fn cmd_mark_call_triggered(
         .lock()
         .map_err(|e| e.to_string())?;
     *triggered = Some(app_name);
+    Ok(())
+}
+
+#[tauri::command]
+pub fn cmd_cancel_auto_stop(
+    state: tauri::State<crate::call_detect::CallDetectState>,
+) -> Result<(), String> {
+    eprintln!("[cmd_cancel_auto_stop] user chose to continue recording");
+    let mut triggered = state
+        .call_triggered_app
+        .lock()
+        .map_err(|e| e.to_string())?;
+    *triggered = None;
     Ok(())
 }
 

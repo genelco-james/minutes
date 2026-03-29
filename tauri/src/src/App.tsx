@@ -246,11 +246,12 @@ export default function App() {
   // List view
   return (
     <div style={styles.app}>
+      <style>{`@keyframes recording-pulse { 0%,100%{opacity:1} 50%{opacity:0.4} }`}</style>
       {/* Header */}
       <div style={styles.header}>
         <div style={styles.headerLeft}>
-          <div style={styles.dot("#34d399")} />
-          <span style={styles.label}>Minutes</span>
+          <div style={styles.dot(recording ? "#ef4444" : "#34d399")} />
+          <span style={styles.label}>{recording ? "Recording" : "Minutes"}</span>
         </div>
       </div>
 
@@ -262,6 +263,12 @@ export default function App() {
             <span>Recording</span>
           </div>
           <div style={styles.bannerTime}>{formatTime(elapsedSecs)}</div>
+          <button
+            onClick={handleToggleRecording}
+            style={{ marginTop: "12px", padding: "6px 20px", borderRadius: "6px", border: "1px solid #333335", background: "transparent", color: "#ef4444", fontSize: "12px", fontWeight: 500, cursor: "pointer", fontFamily: "inherit" }}
+          >
+            Stop Recording
+          </button>
         </div>
       )}
 
