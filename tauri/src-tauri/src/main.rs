@@ -435,8 +435,8 @@ fn get_top_right_position(width: f64, height: f64) -> (f64, f64) {
     let _ = height;
     // Query actual screen width via NSScreen (macOS)
     let screen_width = get_main_screen_width().unwrap_or(1440.0);
-    // Center horizontally with a right-side bias (avoids menu bar icons and notch)
-    let x = screen_width / 2.0 + 100.0;
+    // Top-right, just below menu bar, like macOS system notifications
+    let x = screen_width - width - 36.0;
     let y = 44.0; // Below menu bar + notch on modern MacBooks
     (x, y)
 }
