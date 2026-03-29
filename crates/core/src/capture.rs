@@ -279,8 +279,12 @@ pub fn record_to_wav(
         }
     }
 
-    // Stop and finalize
-    drop(stream); // Stop the audio stream
+    // Stop and finalize — explicitly pause before drop to ensure CoreAudio releases the device
+    {
+        use cpal::traits::StreamTrait;
+        stream.pause().ok();
+    }
+    drop(stream);
 
     let total_samples = sample_count.load(Ordering::Relaxed);
     let duration_secs = total_samples as f64 / 16000.0;

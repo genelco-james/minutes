@@ -1186,11 +1186,21 @@ pub fn start_recording(
                 processing.store(true, Ordering::Relaxed);
             }
             if !should_discard {
+                // Retrieve meeting title if one was detected from the call app (e.g. Teams)
+                let meeting_title: Option<String> = app_handle
+                    .try_state::<crate::call_detect::CallDetectState>()
+                    .and_then(|state| {
+                        state.detected_meeting_title.lock().ok().and_then(|mut t| t.take())
+                    });
+                if let Some(ref title) = meeting_title {
+                    eprintln!("[start_recording] using detected meeting title: {:?}", title);
+                }
+
                 let app_for_progress = app_handle.clone();
                 match minutes_core::pipeline::process_with_progress(
                     &wav_path,
                     mode.content_type(),
-                    None,
+                    meeting_title.as_deref(),
                     &config,
                     |stage| {
                         let label = stage_label(stage, mode);
@@ -1321,6 +1331,17 @@ pub fn start_recording(
     if remove_current_wav && wav_path.exists() {
         std::fs::remove_file(&wav_path).ok();
     }
+
+    // Kill mic_monitor to ensure mic is fully released after recording.
+    // The detection loop will restart it on its next cycle if needed.
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("pkill")
+            .args(["-f", "mic_monitor"])
+            .spawn()
+            .ok();
+    }
+
     processing.store(false, Ordering::Relaxed);
     set_processing_stage(&processing_stage, None);
     minutes_core::pid::clear_processing_status().ok();
