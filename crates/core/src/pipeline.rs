@@ -314,12 +314,40 @@ where
             enrolled_profile_found = Some(self_profile.name.clone());
         }
 
-        // Level 0: deterministic 1-on-1 mapping
+        // Level 0: deterministic speaker mapping
         // Extract actual speaker labels from transcript (handles both native SPEAKER_1
         // and Python subprocess SPEAKER_00 formats)
         let transcript_labels = crate::summarize::extract_speaker_labels_pub(&transcript);
 
-        if !attendees.is_empty()
+        // Single-speaker shortcut: if only one speaker is detected (or all UNKNOWN)
+        // and identity.name is configured, it's the person recording — attribute directly.
+        if diarization_num_speakers <= 1 {
+            if let Some(my_name) = config.identity.name.as_ref() {
+                // Map both the detected speaker label and UNKNOWN to the user's name
+                let label = transcript_labels
+                    .first()
+                    .cloned()
+                    .unwrap_or_else(|| "SPEAKER_0".to_string());
+                speaker_map.push(diarize::SpeakerAttribution {
+                    speaker_label: label,
+                    name: my_name.clone(),
+                    confidence: diarize::Confidence::High,
+                    source: diarize::AttributionSource::Deterministic,
+                });
+                // Also map "UNKNOWN" so timestamps outside diarization segments get attributed
+                speaker_map.push(diarize::SpeakerAttribution {
+                    speaker_label: "UNKNOWN".to_string(),
+                    name: my_name.clone(),
+                    confidence: diarize::Confidence::High,
+                    source: diarize::AttributionSource::Deterministic,
+                });
+                tracing::info!(
+                    name = %my_name,
+                    num_speakers = diarization_num_speakers,
+                    "Level 0: single-speaker attribution — recording owner"
+                );
+            }
+        } else if !attendees.is_empty()
             && diarization_num_speakers == attendees.len()
             && diarization_num_speakers == 2
             && transcript_labels.len() == 2
