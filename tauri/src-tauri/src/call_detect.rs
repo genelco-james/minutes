@@ -183,6 +183,16 @@ impl CallDetector {
                     continue;
                 }
 
+                // Periodic heartbeat for debugging (every ~30s)
+                static TICK: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+                let tick = TICK.fetch_add(1, Ordering::Relaxed);
+                if tick % 10 == 0 {
+                    eprintln!(
+                        "[call-detect] tick={} mic={} recording={} event_driven={}",
+                        tick, mic_active, recording.load(Ordering::Relaxed), event_driven
+                    );
+                }
+
                 let is_recording = recording.load(Ordering::Relaxed);
                 let triggered_app = call_triggered_app.lock().ok().and_then(|g| g.clone());
 
@@ -255,17 +265,26 @@ impl CallDetector {
                     countdown_shown = false;
                     initial_window_count = None;
 
-                    // Check if an ignored app (e.g. Wispr Flow) is using the mic — skip detection
-                    if self.is_ignored_app_active() {
-                        // Mic is active from a dictation/voice app, not a meeting
-                        continue;
-                    }
+                    // Detection strategy:
+                    // 1. If mic is active: check running apps (original approach)
+                    // 2. If mic is off: still check for Teams meeting windows
+                    //    (user may be muted when joining)
+                    let detection = if mic_active {
+                        self.detect_active_call(true)
+                    } else {
+                        // Mic-off fallback: check Teams meeting window directly.
+                        // Catches meetings where user joins muted.
+                        let title = get_teams_meeting_title();
+                        if title.is_some() {
+                            eprintln!("[call-detect] mic off but Teams meeting window found: {:?}", title);
+                            Some(("Teams".to_string(), "com.microsoft.teams2".to_string()))
+                        } else {
+                            None
+                        }
+                    };
 
-                    if let Some((display_name, process_name)) = self.detect_active_call(mic_active) {
+                    if let Some((display_name, process_name)) = detection {
                         if !self.in_cooldown(&process_name) {
-                            // For Teams: verify an actual meeting window exists before prompting.
-                            // Prevents false positives when mic is used by other apps (Wispr Flow, etc.)
-                            // while Teams idles in background.
                             let is_teams = is_teams_app(&process_name);
                             let meeting_title = if is_teams {
                                 get_teams_meeting_title()
@@ -275,7 +294,7 @@ impl CallDetector {
 
                             if is_teams && meeting_title.is_none() {
                                 // Teams process is running but no meeting window — false positive
-                                eprintln!("[call-detect] Teams running but no meeting window — skipping (likely Wispr Flow or other mic user)");
+                                eprintln!("[call-detect] Teams running but no meeting window — skipping");
                                 continue;
                             }
 
