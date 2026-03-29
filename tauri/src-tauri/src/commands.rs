@@ -1187,13 +1187,22 @@ pub fn start_recording(
             }
             if !should_discard {
                 // Retrieve meeting title if one was detected from the call app (e.g. Teams)
-                let meeting_title: Option<String> = app_handle
+                let mut meeting_title: Option<String> = app_handle
                     .try_state::<crate::call_detect::CallDetectState>()
                     .and_then(|state| {
                         state.detected_meeting_title.lock().ok().and_then(|mut t| t.take())
                     });
+                // If no title was captured at detection time, try extracting now.
+                // The meeting window may not have been ready during initial detection,
+                // or the user may have started recording manually.
+                if meeting_title.is_none() {
+                    meeting_title = crate::call_detect::get_teams_meeting_title();
+                    if meeting_title.is_some() {
+                        eprintln!("[start_recording] extracted Teams title at processing time");
+                    }
+                }
                 if let Some(ref title) = meeting_title {
-                    eprintln!("[start_recording] using detected meeting title: {:?}", title);
+                    eprintln!("[start_recording] using meeting title: {:?}", title);
                 }
 
                 let app_for_progress = app_handle.clone();
