@@ -155,6 +155,15 @@ pub fn show_terminal_window(app: &tauri::AppHandle, session_id: &str, title: &st
     }
 }
 
+/// Tray menu item references, managed as Tauri state so that
+/// `update_tray_state` can sync menu items regardless of whether
+/// recording was started from the tray menu or via IPC command.
+pub struct TrayMenuItems {
+    pub record_item: tauri::menu::MenuItem<tauri::Wry>,
+    pub stop_item: tauri::menu::MenuItem<tauri::Wry>,
+    pub quick_thought_item: tauri::menu::MenuItem<tauri::Wry>,
+}
+
 /// Update tray to reflect recording state
 pub fn update_tray_state(app: &tauri::AppHandle, is_recording: bool) {
     update_tray_state_with_mode(app, is_recording, false);
@@ -181,6 +190,15 @@ pub fn update_tray_state_with_mode(app: &tauri::AppHandle, is_active: bool, is_l
             "Minutes"
         };
         tray.set_tooltip(Some(tooltip)).ok();
+    }
+
+    // Sync tray menu items (Start/Stop enabled state)
+    if let Some(menu_state) = app.try_state::<TrayMenuItems>() {
+        let is_busy = is_active || is_live;
+        menu_state.record_item.set_text(if is_busy { "Recording..." } else { "Start Recording" }).ok();
+        menu_state.record_item.set_enabled(!is_busy).ok();
+        menu_state.stop_item.set_enabled(is_busy).ok();
+        menu_state.quick_thought_item.set_enabled(!is_busy).ok();
     }
 }
 
@@ -693,6 +711,13 @@ fn main() {
             let screen_share_item_ref = screen_share_item.clone();
             let sep2 = MenuItem::with_id(app, "sep2", "──────────", false, None::<&str>)?;
             let quit_item = MenuItem::with_id(app, "quit", "Quit Minutes", true, None::<&str>)?;
+
+            // Store menu item refs so update_tray_state can sync them
+            app.manage(TrayMenuItems {
+                record_item: record_item.clone(),
+                stop_item: stop_item.clone(),
+                quick_thought_item: quick_thought_item.clone(),
+            });
 
             let menu = Menu::new(app)?;
             menu.append_items(&[

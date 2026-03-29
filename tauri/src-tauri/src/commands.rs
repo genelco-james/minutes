@@ -1130,8 +1130,9 @@ pub fn start_recording(
     let config = Config::load();
     let wav_path = minutes_core::pid::current_wav_path();
 
+    eprintln!("[start_recording] PID create...");
     if let Err(e) = minutes_core::pid::create() {
-        eprintln!("Failed to create PID: {}", e);
+        eprintln!("[start_recording] PID create FAILED: {}", e);
         show_user_notification(
             &app_handle,
             "Recording",
@@ -1145,6 +1146,7 @@ pub fn start_recording(
         );
         return;
     }
+    eprintln!("[start_recording] PID created OK, setting recording=true");
     starting.store(false, Ordering::Relaxed);
     recording.store(true, Ordering::Relaxed);
     stop_flag.store(false, Ordering::Relaxed);
@@ -1156,7 +1158,7 @@ pub fn start_recording(
     crate::update_tray_state(&app_handle, true);
 
     minutes_core::notes::save_recording_start().ok();
-    eprintln!("{} started...", mode.noun());
+    eprintln!("[start_recording] {} started, capturing audio...", mode.noun());
 
     let mut remove_current_wav = false;
     match minutes_core::capture::record_to_wav(&wav_path, stop_flag, &config) {
@@ -1561,13 +1563,17 @@ pub fn cmd_start_recording(
     state: tauri::State<AppState>,
     mode: Option<String>,
 ) -> Result<(), String> {
+    eprintln!("[cmd_start_recording] called, mode={:?}", mode);
     if recording_active(&state.recording) || state.starting.load(Ordering::Relaxed) {
+        eprintln!("[cmd_start_recording] REJECTED: already recording or starting");
         return Err("Already recording".into());
     }
     if state.live_transcript_active.load(Ordering::Relaxed) {
+        eprintln!("[cmd_start_recording] REJECTED: live transcript active");
         return Err("Live transcript in progress — stop it first".into());
     }
     let capture_mode = parse_capture_mode(mode.as_deref())?;
+    eprintln!("[cmd_start_recording] starting={}, spawning recording thread", capture_mode.noun());
     state.starting.store(true, Ordering::Relaxed);
     let rec = state.recording.clone();
     let starting = state.starting.clone();
@@ -1578,6 +1584,7 @@ pub fn cmd_start_recording(
     let completion_notifications_enabled = state.completion_notifications_enabled.clone();
     let app_done = app.clone();
     std::thread::spawn(move || {
+        eprintln!("[cmd_start_recording] thread started, calling start_recording()");
         start_recording(
             app,
             rec,
@@ -1591,6 +1598,7 @@ pub fn cmd_start_recording(
             None,
             capture_mode,
         );
+        eprintln!("[cmd_start_recording] start_recording() returned, resetting tray");
         crate::update_tray_state(&app_done, false);
     });
     Ok(())
@@ -1606,6 +1614,7 @@ pub fn cmd_mark_call_triggered(
     state: tauri::State<crate::call_detect::CallDetectState>,
     app_name: String,
 ) -> Result<(), String> {
+    eprintln!("[cmd_mark_call_triggered] setting call_triggered_app = {:?}", app_name);
     let mut triggered = state
         .call_triggered_app
         .lock()
