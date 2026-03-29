@@ -170,8 +170,8 @@
       recordBtn.textContent = '\u2026';
 
       try {
-        await invoke('cmd_start_recording');
         await invoke('cmd_mark_call_triggered', { appName: appName });
+        await invoke('cmd_start_recording');
 
         toast.classList.add('show');
         setTimeout(function() {

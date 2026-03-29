@@ -91,6 +91,9 @@ impl CallDetector {
             let grace_checks =
                 (MIC_SILENCE_GRACE_SECS / self.config.poll_interval_secs.max(1)) as u32;
 
+            // Track previous recording state to detect recording→stopped transitions
+            let mut was_recording = false;
+
             loop {
                 std::thread::sleep(interval);
 
@@ -103,6 +106,8 @@ impl CallDetector {
                 let triggered_app = call_triggered_app.lock().ok().and_then(|g| g.clone());
 
                 if is_recording {
+                    was_recording = true;
+
                     // ── END-DETECTION MODE ─────────────────────────
                     // Only monitor for call end if THIS recording was started via call prompt
                     if let Some(ref app_name) = triggered_app {
@@ -166,12 +171,15 @@ impl CallDetector {
                     // Reset silence counter when not recording
                     silence_miss_count = 0;
 
-                    // Also clear stale call_triggered_app if recording stopped externally
-                    if triggered_app.is_some() {
+                    // Clear call_triggered_app only on a true recording→stopped transition,
+                    // NOT when recording hasn't started yet (avoids race condition where
+                    // cmd_mark_call_triggered runs before recording flag is set)
+                    if was_recording && triggered_app.is_some() {
                         if let Ok(mut g) = call_triggered_app.lock() {
                             *g = None;
                         }
                     }
+                    was_recording = false;
 
                     if let Some((display_name, process_name)) = self.detect_active_call() {
                         if !self.in_cooldown(&process_name) {
