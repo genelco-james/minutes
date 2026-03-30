@@ -1187,38 +1187,133 @@ pub fn start_recording(
             }
             if !should_discard {
                 // Retrieve meeting title if one was detected from the call app (e.g. Teams)
+                // Log title retrieval to file for debugging
+                let _title_log = |msg: &str| {
+                    if let Some(home) = dirs::home_dir() {
+                        if let Ok(mut f) = std::fs::OpenOptions::new()
+                            .create(true).append(true)
+                            .open(home.join(".minutes/logs/title-debug.log"))
+                        {
+                            use std::io::Write;
+                            writeln!(f, "[{}] {}", chrono::Local::now().format("%H:%M:%S"), msg).ok();
+                        }
+                    }
+                };
+                _title_log("--- processing started, checking for meeting title ---");
+
+                let has_state = app_handle.try_state::<crate::call_detect::CallDetectState>().is_some();
+                _title_log(&format!("CallDetectState exists: {}", has_state));
+
                 let mut meeting_title: Option<String> = app_handle
                     .try_state::<crate::call_detect::CallDetectState>()
                     .and_then(|state| {
-                        state.detected_meeting_title.lock().ok().and_then(|mut t| t.take())
+                        let result = state.detected_meeting_title.lock().ok().and_then(|mut t| t.take());
+                        result
                     });
-                // If no title was captured at detection time, try extracting now.
-                // The meeting window may not have been ready during initial detection,
-                // or the user may have started recording manually.
-                if meeting_title.is_none() {
-                    meeting_title = crate::call_detect::get_teams_meeting_title();
-                    if meeting_title.is_some() {
-                        eprintln!("[start_recording] extracted Teams title at processing time");
-                    }
-                }
-                if let Some(ref title) = meeting_title {
-                    eprintln!("[start_recording] using meeting title: {:?}", title);
-                }
+                _title_log(&format!("stored title from detection: {:?}", meeting_title));
 
-                let app_for_progress = app_handle.clone();
-                match minutes_core::pipeline::process_with_progress(
-                    &wav_path,
-                    mode.content_type(),
-                    meeting_title.as_deref(),
-                    &config,
-                    |stage| {
-                        let label = stage_label(stage, mode);
-                        set_processing_stage(&processing_stage, Some(label));
-                        let _ = minutes_core::pid::set_processing_status(Some(label), Some(mode));
-                        app_for_progress.emit("processing-status", serde_json::json!({"stage": label})).ok();
-                    },
-                ) {
-                    Ok(result) => {
+                if meeting_title.is_none() {
+                    _title_log("no stored title, trying live extraction...");
+                    meeting_title = crate::call_detect::get_teams_meeting_title();
+                    _title_log(&format!("live extraction result: {:?}", meeting_title));
+                }
+                _title_log(&format!("FINAL title: {:?}", meeting_title));
+
+                // Try AssemblyAI transcription first (fast, cloud-based).
+                // Falls back to local whisper pipeline if AssemblyAI fails.
+                let use_assemblyai = config.transcription.engine == "assemblyai"
+                    || config.transcription.engine == "auto";
+                let assemblyai_script = dirs::home_dir()
+                    .unwrap_or_default()
+                    .join("Documents/Cursor_Projects/minutes/scripts/transcribe-assemblyai.py");
+
+                let process_result: Result<(String, String, usize), String> = if use_assemblyai
+                    && assemblyai_script.exists()
+                {
+                    set_processing_stage(&processing_stage, Some("Uploading to AssemblyAI..."));
+                    let _ = minutes_core::pid::set_processing_status(
+                        Some("Uploading to AssemblyAI..."),
+                        Some(mode),
+                    );
+                    app_handle
+                        .emit(
+                            "processing-status",
+                            serde_json::json!({"stage": "Uploading to AssemblyAI..."}),
+                        )
+                        .ok();
+
+                    let mut cmd = std::process::Command::new(
+                        "/Library/Frameworks/Python.framework/Versions/3.11/bin/python3",
+                    );
+                    cmd.arg(&assemblyai_script).arg(&wav_path);
+                    if let Some(ref title) = meeting_title {
+                        cmd.arg("--title").arg(title);
+                    }
+
+                    eprintln!(
+                        "[assemblyai] running: python3 {} {}",
+                        assemblyai_script.display(),
+                        wav_path.display()
+                    );
+
+                    match cmd.output() {
+                        Ok(output) if output.status.success() => {
+                            let stdout = String::from_utf8_lossy(&output.stdout);
+                            // Parse "Saved: /path/to/file.md" from output
+                            let saved_path = stdout
+                                .lines()
+                                .find(|l| l.starts_with("Saved: "))
+                                .map(|l| l.trim_start_matches("Saved: ").to_string());
+                            if let Some(path) = saved_path {
+                                let title_str = meeting_title
+                                    .clone()
+                                    .unwrap_or_else(|| "Meeting".to_string());
+                                Ok((title_str, path, 0))
+                            } else {
+                                Err(format!("AssemblyAI script succeeded but no output path found: {}", stdout))
+                            }
+                        }
+                        Ok(output) => {
+                            let stderr = String::from_utf8_lossy(&output.stderr);
+                            Err(format!("AssemblyAI script failed: {}", stderr))
+                        }
+                        Err(e) => Err(format!("Failed to run AssemblyAI script: {}", e)),
+                    }
+                } else {
+                    // Local whisper pipeline (original behavior)
+                    let app_for_progress = app_handle.clone();
+                    minutes_core::pipeline::process_with_progress(
+                        &wav_path,
+                        mode.content_type(),
+                        meeting_title.as_deref(),
+                        &config,
+                        |stage| {
+                            let label = stage_label(stage, mode);
+                            set_processing_stage(&processing_stage, Some(label));
+                            let _ = minutes_core::pid::set_processing_status(
+                                Some(label),
+                                Some(mode),
+                            );
+                            app_for_progress
+                                .emit(
+                                    "processing-status",
+                                    serde_json::json!({"stage": label}),
+                                )
+                                .ok();
+                        },
+                    )
+                    .map(|result| {
+                        (
+                            result.title.clone(),
+                            result.path.display().to_string(),
+                            result.word_count,
+                        )
+                    })
+                    .map_err(|e| e.to_string())
+                };
+
+                match process_result {
+                    Ok((title, path, word_count)) => {
                         remove_current_wav = true;
                         let detail = match mode {
                             CaptureMode::Meeting => "Saved meeting markdown",
@@ -1228,8 +1323,8 @@ pub fn start_recording(
                         };
                         let notice = OutputNotice {
                             kind: "saved".into(),
-                            title: result.title.clone(),
-                            path: result.path.display().to_string(),
+                            title: title.clone(),
+                            path: path.clone(),
                             detail: detail.into(),
                         };
                         set_latest_output(&latest_output, Some(notice.clone()));
@@ -1240,14 +1335,14 @@ pub fn start_recording(
                         );
                         app_handle.emit("processing-status", serde_json::json!({"stage": "done"})).ok();
                         app_handle.emit("latest-artifact", serde_json::json!({
-                            "path": result.path.display().to_string(),
-                            "title": result.title
+                            "path": path,
+                            "title": title
                         })).ok();
                         eprintln!(
                             "Saved {}: {} ({} words)",
                             mode.noun(),
-                            result.path.display(),
-                            result.word_count
+                            path,
+                            word_count
                         );
                     }
                     Err(e) => {
