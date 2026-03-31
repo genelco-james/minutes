@@ -526,6 +526,7 @@ where
         status,
         tags: vec![],
         attendees,
+        invitees: vec![],
         calendar_event: calendar_event_title,
         people,
         entities,

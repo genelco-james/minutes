@@ -11,6 +11,7 @@ use tauri::{
 mod call_detect;
 mod commands;
 mod context;
+mod outlook;
 mod pty;
 
 #[cfg(target_os = "macos")]
@@ -1107,9 +1108,11 @@ fn main() {
             // Start call detection background loop
             let call_triggered_app = Arc::new(Mutex::new(None::<String>));
             let detected_meeting_title = Arc::new(Mutex::new(None::<String>));
+            let detected_invitees = Arc::new(Mutex::new(Vec::<outlook::OutlookInvitee>::new()));
             app.manage(call_detect::CallDetectState {
                 call_triggered_app: call_triggered_app.clone(),
                 detected_meeting_title: detected_meeting_title.clone(),
+                detected_invitees: detected_invitees.clone(),
             });
             if commands::supports_call_detection() {
                 let config = minutes_core::config::Config::load();
@@ -1121,6 +1124,7 @@ fn main() {
                     stop_for_detector,
                     call_triggered_app,
                     detected_meeting_title,
+                    detected_invitees,
                 );
             }
 

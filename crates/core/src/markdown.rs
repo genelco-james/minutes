@@ -32,6 +32,26 @@ pub enum OutputStatus {
     TranscriptOnly,
 }
 
+/// Role of a meeting invitee from the calendar event.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum InviteeRole {
+    Required,
+    Optional,
+    Organizer,
+}
+
+/// A meeting invitee from the calendar event (Outlook, Calendar.app, etc.).
+/// Separate from `attendees` which tracks actual meeting attendance.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct Invitee {
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub email: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub role: Option<InviteeRole>,
+}
+
 /// Frontmatter for a meeting/memo markdown file.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct Frontmatter {
@@ -47,6 +67,8 @@ pub struct Frontmatter {
     pub tags: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub attendees: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub invitees: Vec<Invitee>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub calendar_event: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -365,6 +387,7 @@ mod tests {
             status: Some(OutputStatus::Complete),
             tags: vec![],
             attendees: vec![],
+            invitees: vec![],
             calendar_event: None,
             people: vec![],
             entities: EntityLinks::default(),

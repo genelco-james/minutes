@@ -39,6 +39,9 @@ pub struct CallDetectState {
     /// Meeting title extracted from the call app window (e.g. Teams meeting subject).
     /// Set when a call is detected; consumed by start_recording to name the output file.
     pub detected_meeting_title: Arc<Mutex<Option<String>>>,
+    /// Meeting invitees extracted from the Outlook calendar event.
+    /// Set when a Teams call is detected; consumed by start_recording for frontmatter.
+    pub detected_invitees: Arc<Mutex<Vec<crate::outlook::OutlookInvitee>>>,
 }
 
 /// Grace period for mic-silence fallback (apps without window detection).
@@ -67,6 +70,7 @@ impl CallDetector {
         _stop_flag: Arc<AtomicBool>,
         call_triggered_app: Arc<Mutex<Option<String>>>,
         detected_meeting_title: Arc<Mutex<Option<String>>>,
+        detected_invitees: Arc<Mutex<Vec<crate::outlook::OutlookInvitee>>>,
     ) {
         if !self.config.enabled {
             eprintln!("[call-detect] disabled in config");
@@ -347,9 +351,22 @@ impl CallDetector {
                             );
                             self.set_cooldown(&process_name);
 
+                            // Query Outlook for meeting invitees (best-effort)
+                            let invitees = if is_teams {
+                                crate::outlook::get_outlook_invitees(meeting_title.as_deref())
+                            } else {
+                                Vec::new()
+                            };
+                            dlog!("[call-detect] outlook invitees={}", invitees.len());
+
                             // Store meeting title for naming the output file
                             if let Ok(mut t) = detected_meeting_title.lock() {
                                 *t = meeting_title;
+                            }
+
+                            // Store invitees for frontmatter injection
+                            if let Ok(mut inv) = detected_invitees.lock() {
+                                *inv = invitees;
                             }
 
                             // Show floating prompt window instead of macOS notification
@@ -765,30 +782,48 @@ pub fn get_teams_meeting_title() -> Option<String> {
     return ""
 end tell"#;
 
+    // Log to file since eprintln is lost when app runs from menu bar
+    let title_log = || -> Option<std::fs::File> {
+        std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(dirs::home_dir()?.join(".minutes/logs/title-debug.log"))
+            .ok()
+    };
+    let mut lf = title_log();
+    macro_rules! tlog {
+        ($($arg:tt)*) => {{
+            let msg = format!($($arg)*);
+            eprintln!("{}", msg);
+            if let Some(ref mut f) = lf {
+                use std::io::Write;
+                writeln!(f, "[{}] {}", chrono::Local::now().format("%H:%M:%S"), msg).ok();
+                f.flush().ok();
+            }
+        }};
+    }
+
+    tlog!("[title-extract] running AppleScript...");
     let output = std::process::Command::new("osascript")
         .arg("-e")
         .arg(script)
         .output();
 
     match output {
-        Ok(out) if out.status.success() => {
-            let title = String::from_utf8_lossy(&out.stdout).trim().to_string();
-            if title.is_empty() {
-                None
+        Ok(out) => {
+            let stdout = String::from_utf8_lossy(&out.stdout).trim().to_string();
+            let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
+            tlog!("[title-extract] exit={} stdout={:?} stderr={:?}", out.status, stdout, stderr);
+            if out.status.success() && !stdout.is_empty() {
+                tlog!("[title-extract] SUCCESS: {:?}", stdout);
+                Some(stdout)
             } else {
-                eprintln!("[call-detect] extracted Teams meeting title: {:?}", title);
-                Some(title)
+                tlog!("[title-extract] no title (empty or failed)");
+                None
             }
         }
-        Ok(out) => {
-            eprintln!(
-                "[call-detect] Teams title extraction failed: {}",
-                String::from_utf8_lossy(&out.stderr).trim()
-            );
-            None
-        }
         Err(e) => {
-            eprintln!("[call-detect] Teams title extraction error: {}", e);
+            tlog!("[title-extract] osascript spawn error: {}", e);
             None
         }
     }

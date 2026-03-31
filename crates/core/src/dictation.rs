@@ -546,6 +546,7 @@ fn write_dictation_file(text: &str, duration_secs: f64, config: &Config) -> Opti
         status: Some(OutputStatus::Complete),
         tags: vec![],
         attendees: vec![],
+        invitees: vec![],
         calendar_event: None,
         people: vec![],
         entities: crate::markdown::EntityLinks::default(),

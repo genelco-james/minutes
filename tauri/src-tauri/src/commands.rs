@@ -56,9 +56,17 @@ pub struct MeetingDetail {
     pub status: Option<String>,
     pub context: Option<String>,
     pub attendees: Vec<String>,
+    pub invitees: Vec<InviteeView>,
     pub calendar_event: Option<String>,
     pub sections: Vec<MeetingSection>,
     pub speaker_map: Vec<SpeakerAttributionView>,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct InviteeView {
+    pub name: String,
+    pub email: Option<String>,
+    pub role: Option<String>,
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -1095,6 +1103,75 @@ fn scan_recovery_items(config: &Config) -> Vec<RecoveryItem> {
     found.into_iter().map(|(_, item)| item).collect()
 }
 
+/// Inject invitees into a saved markdown file's YAML frontmatter.
+/// Uses text-based insertion to preserve all existing fields (including unknown ones
+/// like `transcription_engine` from AssemblyAI that aren't in the Frontmatter struct).
+fn inject_invitees_into_markdown(
+    path: &str,
+    invitees: &[crate::outlook::OutlookInvitee],
+) -> Result<(), String> {
+    let content = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
+
+    if !content.starts_with("---") {
+        return Err("no frontmatter found".into());
+    }
+
+    // Find the closing --- of frontmatter
+    let rest = &content[3..];
+    let end_offset = rest.find("\n---").ok_or("no closing --- in frontmatter")?;
+
+    // Guard against double-injection (e.g. retry/re-process)
+    let frontmatter_text = &rest[..end_offset];
+    if frontmatter_text.contains("\ninvitees:") || frontmatter_text.starts_with("invitees:") {
+        return Ok(());
+    }
+
+    // Insert position: after the \n that precedes the closing ---
+    let insert_pos = 3 + end_offset + 1;
+
+    // Build the invitees YAML block
+    let mut yaml_block = String::from("invitees:\n");
+    for inv in invitees {
+        // Quote names/emails to handle special YAML characters
+        yaml_block.push_str(&format!("- name: \"{}\"\n", inv.name.replace('"', "\\\"")));
+        if !inv.email.is_empty() {
+            yaml_block.push_str(&format!(
+                "  email: \"{}\"\n",
+                inv.email.replace('"', "\\\"")
+            ));
+        }
+        // Skip room/equipment resource attendees — they aren't people
+        if inv.role.contains("resource") {
+            continue;
+        }
+        let role = if inv.role.contains("optional") {
+            "optional"
+        } else if inv.role.contains("organizer") {
+            "organizer"
+        } else {
+            "required"
+        };
+        yaml_block.push_str(&format!("  role: {}\n", role));
+    }
+
+    // Insert before the closing ---
+    let mut new_content = String::with_capacity(content.len() + yaml_block.len());
+    new_content.push_str(&content[..insert_pos]);
+    new_content.push_str(&yaml_block);
+    new_content.push_str(&content[insert_pos..]);
+
+    std::fs::write(path, &new_content).map_err(|e| e.to_string())?;
+
+    // Restore 0600 permissions (owner read/write only)
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600)).ok();
+    }
+
+    Ok(())
+}
+
 /// Start recording in a background thread.
 #[allow(clippy::too_many_arguments)]
 pub fn start_recording(
@@ -1315,6 +1392,41 @@ pub fn start_recording(
                 match process_result {
                     Ok((title, path, word_count)) => {
                         remove_current_wav = true;
+
+                        // Always drain invitees from state to prevent leaking
+                        // into a future recording of a different mode
+                        let invitees: Vec<crate::outlook::OutlookInvitee> = app_handle
+                            .try_state::<crate::call_detect::CallDetectState>()
+                            .and_then(|state| {
+                                state.detected_invitees.lock().ok().map(|mut inv| {
+                                    std::mem::take(&mut *inv)
+                                })
+                            })
+                            .unwrap_or_default();
+
+                        // Inject Outlook invitees into saved markdown (meetings only)
+                        if mode == CaptureMode::Meeting && !invitees.is_empty() {
+                            match inject_invitees_into_markdown(&path, &invitees) {
+                                Ok(()) => {
+                                    eprintln!(
+                                        "[invitees] injected {} invitees into {}",
+                                        invitees.len(),
+                                        path
+                                    );
+                                    // Re-sync to vault so the copy has invitees too
+                                    if let Err(e) = minutes_core::vault::sync_file(
+                                        &std::path::PathBuf::from(&path),
+                                        &config,
+                                    ) {
+                                        eprintln!("[invitees] vault re-sync failed: {}", e);
+                                    }
+                                }
+                                Err(e) => {
+                                    eprintln!("[invitees] injection failed: {}", e);
+                                }
+                            }
+                        }
+
                         let detail = match mode {
                             CaptureMode::Meeting => "Saved meeting markdown",
                             CaptureMode::QuickThought => "Saved quick thought memo",
@@ -2237,6 +2349,16 @@ pub fn cmd_get_meeting_detail(path: String) -> Result<MeetingDetail, String> {
         })
         .collect();
 
+    let invitees: Vec<InviteeView> = frontmatter
+        .invitees
+        .iter()
+        .map(|inv| InviteeView {
+            name: inv.name.clone(),
+            email: inv.email.clone(),
+            role: inv.role.as_ref().map(|r| format!("{:?}", r).to_lowercase()),
+        })
+        .collect();
+
     Ok(MeetingDetail {
         path,
         title: frontmatter.title,
@@ -2246,6 +2368,7 @@ pub fn cmd_get_meeting_detail(path: String) -> Result<MeetingDetail, String> {
         status,
         context: frontmatter.context,
         attendees: frontmatter.attendees,
+        invitees,
         calendar_event: frontmatter.calendar_event,
         sections: parse_sections(body),
         speaker_map,
