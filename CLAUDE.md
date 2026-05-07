@@ -36,8 +36,8 @@
          │
          ▼ vault sync (copy strategy)
 ┌─────────────────────────────────────────────────────────┐
-│ Obsidian Vault (a-life)                                 │
-│ ~/Documents/Obsidian/a-life/01-Inbox/                   │
+│ Obsidian Vault (my-powerx-brain)                        │
+│ ~/Documents/my-powerx-brain/01-Inbox/                   │
 │ → Processed via /process-meeting Claude Code skill      │
 └─────────────────────────────────────────────────────────┘
 ```
@@ -252,7 +252,7 @@ Config file: `~/.config/minutes/config.toml`
 ### James's Configuration
 
 ```toml
-output_dir = "/Users/jgaynor/meetings"
+output_dir = "/Users/jamesg/meetings"
 
 [transcription]
 model = "medium"                    # Whisper medium (1.5 GB, good accuracy)
@@ -269,7 +269,7 @@ apps = ["zoom.us", "Microsoft Teams", "FaceTime", "Webex", "Slack"]
 
 [vault]
 enabled = true
-path = "/Users/jgaynor/Documents/Obsidian/a-life"
+path = "/Users/jamesg/Documents/my-powerx-brain"
 meetings_subdir = "01-Inbox"        # Transcripts land in Obsidian inbox
 strategy = "copy"
 ```
@@ -387,5 +387,5 @@ minutes vault status           # Verify Obsidian sync is healthy
 | SQLite index | `~/.minutes/` |
 | Logs | `~/.minutes/logs/` |
 | Watcher service | `~/Library/LaunchAgents/dev.getminutes.watcher.plist` |
-| Vault sync target | `~/Documents/Obsidian/a-life/01-Inbox/` |
+| Vault sync target | `~/Documents/my-powerx-brain/01-Inbox/` |
 | Fork source | `~/Documents/Cursor_Projects/minutes/` |
