@@ -88,14 +88,10 @@ def transcribe(audio_path: str, title: str | None = None) -> Path:
     now = datetime.now().astimezone()
     duration_str = format_duration(duration_secs)
 
-    # Build speaker map from utterances
-    speakers = {}
-    if transcript.utterances:
-        for utt in transcript.utterances:
-            if utt.speaker not in speakers:
-                speakers[utt.speaker] = f"Speaker {utt.speaker}"
-
-    # YAML frontmatter
+    # YAML frontmatter. Speaker labels stay inline in the transcript body;
+    # we don't populate speaker_map because AssemblyAI's labels ("A", "B", ...)
+    # aren't real identity attributions — the frontend/process-meeting skill
+    # resolves names later.
     lines = []
     lines.append("---")
     lines.append(f"title: {title}")
@@ -105,13 +101,6 @@ def transcribe(audio_path: str, title: str | None = None) -> Path:
     lines.append("status: transcript-only")
     lines.append(f"recorded_by: {IDENTITY_NAME}")
     lines.append("transcription_engine: assemblyai-universal-3-pro")
-    if speakers:
-        lines.append("speaker_map:")
-        for label, name in speakers.items():
-            lines.append(f"- speaker_label: {label}")
-            lines.append(f"  name: {name}")
-            lines.append("  confidence: high")
-            lines.append("  source: assemblyai")
     lines.append("---")
     lines.append("")
     lines.append("## Transcript")
