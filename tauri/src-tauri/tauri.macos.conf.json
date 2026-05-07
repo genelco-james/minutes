@@ -1,7 +1,8 @@
 {
   "bundle": {
     "externalBin": [
-      "bin/mic_check"
+      "bin/mic_check",
+      "bin/calendar-events"
     ],
     "macOS": {
       "entitlements": "entitlements.plist",
