@@ -1,4 +1,4 @@
-use std::process::Command;
+use std::process::{Command, Stdio};
 use std::time::Duration;
 
 // ──────────────────────────────────────────────────────────────
@@ -19,6 +19,7 @@ pub(crate) fn output_with_timeout(
     mut cmd: Command,
     timeout: Duration,
 ) -> Option<std::process::Output> {
+    cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
     let child = cmd.spawn().ok()?;
 
     let (tx, rx) = std::sync::mpsc::channel();
