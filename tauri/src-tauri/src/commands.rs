@@ -1300,11 +1300,15 @@ pub fn start_recording(
                 // Falls back to local whisper pipeline if AssemblyAI fails.
                 let use_assemblyai = config.transcription.engine == "assemblyai"
                     || config.transcription.engine == "auto";
-                let assemblyai_script = dirs::home_dir()
-                    .unwrap_or_default()
-                    .join("Documents/Cursor_Projects/minutes/scripts/transcribe-assemblyai.py");
+                let assemblyai_script = config.transcription.assemblyai_script.clone();
+                let python_path = if config.transcription.assemblyai_python.as_os_str().is_empty() {
+                    PathBuf::from("python3")
+                } else {
+                    config.transcription.assemblyai_python.clone()
+                };
 
                 let process_result: Result<(String, String, usize), String> = if use_assemblyai
+                    && !assemblyai_script.as_os_str().is_empty()
                     && assemblyai_script.exists()
                 {
                     set_processing_stage(&processing_stage, Some("Uploading to AssemblyAI..."));
@@ -1319,9 +1323,7 @@ pub fn start_recording(
                         )
                         .ok();
 
-                    let mut cmd = std::process::Command::new(
-                        "/Library/Frameworks/Python.framework/Versions/3.11/bin/python3",
-                    );
+                    let mut cmd = std::process::Command::new(&python_path);
                     cmd.arg(&assemblyai_script).arg(&wav_path);
                     if let Some(ref title) = meeting_title {
                         cmd.arg("--title").arg(title);

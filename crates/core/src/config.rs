@@ -66,6 +66,12 @@ pub struct TranscriptionConfig {
     pub parakeet_model: String,
     /// SentencePiece vocab filename (resolved under model_path/parakeet/, e.g. "vocab.txt").
     pub parakeet_vocab: String,
+    /// Absolute path to the AssemblyAI sidecar script. Empty disables AssemblyAI even when
+    /// `engine = "assemblyai"` (the app falls back to local whisper).
+    pub assemblyai_script: PathBuf,
+    /// Absolute path to the Python interpreter used for the AssemblyAI script. Empty falls
+    /// back to `python3` resolved via PATH.
+    pub assemblyai_python: PathBuf,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -341,6 +347,8 @@ impl Default for TranscriptionConfig {
             parakeet_binary: "parakeet".into(),
             parakeet_model: "tdt-ctc-110m".into(),
             parakeet_vocab: "vocab.txt".into(),
+            assemblyai_script: PathBuf::new(),
+            assemblyai_python: PathBuf::new(),
         }
     }
 }

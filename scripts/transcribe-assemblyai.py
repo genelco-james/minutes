@@ -39,7 +39,7 @@ aai.settings.api_key = API_KEY
 
 # Config — matches Minutes app paths
 MEETINGS_DIR = Path.home() / "meetings"
-VAULT_PATH = Path.home() / "Documents" / "Obsidian" / "a-life"
+VAULT_PATH = Path(os.environ.get("MINUTES_VAULT_PATH", str(Path.home() / "Documents" / "my-powerx-brain")))
 VAULT_INBOX = VAULT_PATH / "01-Inbox"
 IDENTITY_NAME = "James Gaynor"
 
