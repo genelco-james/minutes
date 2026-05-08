@@ -126,11 +126,11 @@ pub fn upcoming_events(lookahead_minutes: u32) -> Vec<CalendarEvent> {
     }
     #[cfg(target_os = "macos")]
     {
-        // Try compiled EventKit helper first
+        // Try compiled EventKit helper first. An empty result is valid (e.g. no
+        // events in the lookahead window) — only fall back when the helper itself
+        // fails to run, since the AppleScript fallback launches Calendar.app.
         if let Some(events) = query_via_eventkit(lookahead_minutes) {
-            if !events.is_empty() {
-                return events;
-            }
+            return events;
         }
         // AppleScript: fetch today's events, filter by time range
         query_via_applescript(lookahead_minutes)
