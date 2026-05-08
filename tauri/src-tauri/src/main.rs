@@ -250,32 +250,25 @@ fn show_meeting_prompt(app: &tauri::AppHandle, event: &minutes_core::calendar::C
         win.close().ok();
     }
 
-    // Encode event data in URL fragment: title|minutesUntil|url
-    let url_part = event.url.as_deref().unwrap_or("");
-    let fragment = format!(
-        "{}|{}|{}",
-        event.title.replace('|', " "),
-        event.minutes_until,
-        url_part
-    );
-    let encoded = fragment
-        .chars()
-        .map(|c| {
-            if c.is_ascii_alphanumeric() || "-._~ |/".contains(c) {
-                c.to_string()
-            } else {
-                format!("%{:02X}", c as u32)
-            }
-        })
-        .collect::<String>();
+    // Encode event data as base64-encoded JSON in URL fragment.
+    // Avoids URL-encoding ambiguity (webview was double-encoding spaces → %2520 → %20 in DOM).
+    let payload = serde_json::json!({
+        "title": event.title,
+        "minutesUntil": event.minutes_until,
+        "url": event.url.as_deref().unwrap_or(""),
+    });
+    let encoded = {
+        use base64::Engine as _;
+        base64::engine::general_purpose::STANDARD.encode(payload.to_string().as_bytes())
+    };
     let url = format!("meeting-prompt.html#{}", encoded);
 
     // Position: top-right of main screen, below menu bar
-    let (pos_x, pos_y) = get_top_right_position(340.0, 140.0);
+    let (pos_x, pos_y) = get_top_right_position(440.0, 56.0);
 
     match WebviewWindowBuilder::new(app, "meeting-prompt", WebviewUrl::App(url.into()))
         .title("Upcoming Meeting")
-        .inner_size(340.0, 140.0)
+        .inner_size(440.0, 56.0)
         .position(pos_x, pos_y)
         .resizable(false)
         .decorations(false)
@@ -315,17 +308,12 @@ pub fn show_call_prompt(app: &tauri::AppHandle, app_name: &str) {
         win.close().ok();
     }
 
-    // Encode app name in URL fragment
-    let encoded = app_name
-        .chars()
-        .map(|c| {
-            if c.is_ascii_alphanumeric() || "-._~ ".contains(c) {
-                c.to_string()
-            } else {
-                format!("%{:02X}", c as u32)
-            }
-        })
-        .collect::<String>();
+    // Encode app name as base64-encoded JSON in URL fragment (matches meeting-prompt scheme).
+    let payload = serde_json::json!({ "appName": app_name });
+    let encoded = {
+        use base64::Engine as _;
+        base64::engine::general_purpose::STANDARD.encode(payload.to_string().as_bytes())
+    };
     let url = format!("call-prompt.html#{}", encoded);
 
     let (pos_x, pos_y) = get_top_right_position(280.0, 36.0);

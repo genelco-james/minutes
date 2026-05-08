@@ -17,7 +17,7 @@
       -webkit-user-select: none;
       user-select: none;
       border: 1px solid rgba(255, 255, 255, 0.08);
-      border-radius: 9px;
+      border-radius: 12px;
       overflow: hidden;
       backdrop-filter: blur(20px);
       -webkit-backdrop-filter: blur(20px);
@@ -154,7 +154,19 @@
     const { invoke } = window.__TAURI__.core;
     const { getCurrentWebviewWindow } = window.__TAURI__.webviewWindow;
 
-    const appName = decodeURIComponent(window.location.hash.slice(1)) || 'Call';
+    function fromBase64Utf8(b64) {
+      const bin = atob(b64);
+      const bytes = Uint8Array.from(bin, c => c.charCodeAt(0));
+      return new TextDecoder().decode(bytes);
+    }
+
+    let appName = 'Call';
+    try {
+      const raw = window.location.hash.slice(1);
+      if (raw) appName = JSON.parse(fromBase64Utf8(raw)).appName || 'Call';
+    } catch (e) {
+      console.error('failed to parse call data', e);
+    }
 
     const appNameEl = document.getElementById('app-name');
     const recordBtn = document.getElementById('record-btn');
